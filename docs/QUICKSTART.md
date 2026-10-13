@@ -1,6 +1,6 @@
 # 快速入门 / Quick Start
 
-**当前状态：设计阶段，没有可安装的软件包。下面的 MCP 流程是预期体验，尚不能作为已可运行的操作教程。**
+**当前状态：已有可从源码构建的 M0 传输 PoC，没有可安装发行包。源码运行见 [M0 开发说明](M0.md)；下面的完整任务流程仍是预期体验，尚不能作为已可运行的操作教程。**
 
 ## 中文
 
@@ -36,7 +36,7 @@ gh auth status
 
 ## English
 
-**Design stage: no installable package is available. The MCP workflow below is planned and is not yet a working tutorial.**
+**An unreleased M0 transport PoC can now be built from source; no installable release is available. See [M0 development instructions](M0.md). The complete task workflow below remains planned, not a working tutorial.**
 
 ### Prepare now
 

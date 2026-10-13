@@ -2,7 +2,7 @@
 
 ## 当前状态与支持版本
 
-项目处于设计阶段，没有软件发行或已验证的安全运行能力。发行后的版本维护策略见 [贡献规则](CONTRIBUTING.md#9-开源维护与支持)。本政策不承诺漏洞响应或修复时限。
+项目已有未发布的 M0 传输 PoC，没有软件发行或经真实 Codespaces 验证的安全运行能力。M0 边界见 [开发说明](docs/M0.md)。发行后的版本维护策略见 [贡献规则](CONTRIBUTING.md#9-开源维护与支持)。本政策不承诺漏洞响应或修复时限。
 
 ## 报告安全问题
 
@@ -14,7 +14,7 @@
 
 ## English
 
-This project is in the design phase and has no software releases. See [CONTRIBUTING](CONTRIBUTING.md) for the planned version support policy. No response or remediation SLA is promised.
+This project has an unreleased M0 transport PoC and no software releases or live Codespaces security validation. See [M0 limitations](docs/M0.md) and [CONTRIBUTING](CONTRIBUTING.md) for the planned version support policy. No response or remediation SLA is promised.
 
 GitHub Private Vulnerability Reporting must be enabled and checked before the first public preview. The public repository has not been created, so this reporting channel is not available yet, and no alternative security email has been published.
 

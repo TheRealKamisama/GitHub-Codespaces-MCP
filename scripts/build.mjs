@@ -1,0 +1,10 @@
+import { readFile, mkdir, copyFile, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+const pkg = JSON.parse(await readFile('package.json', 'utf8'));
+const source = await readFile('runner/main.py');
+await mkdir('dist/runner', { recursive: true });
+for (const file of ['main.py', 'bootstrap.py']) await copyFile(`runner/${file}`, `dist/runner/${file}`);
+const gitSha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+const dirty = execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim() !== '';
+await writeFile('dist/build.json', JSON.stringify({ version: pkg.version, gitSha, dirty, runnerSha256: createHash('sha256').update(source).digest('hex'), runnerProtocol: 1 }));

@@ -8,7 +8,9 @@
 
 0.2 变更：按用户要求，将使用完成后的资源释放设为第一版必需能力；默认导出结果后自动停止 Codespace，可选导出后删除；新增本地回收控制进程、实例级使用租约和独立回收状态。
 
-本文定义产品范围、模块职责、MCP 工具契约、任务生命周期和验收标准。当前处于设计阶段，尚未实现或运行任何 Codespace 任务。项目已采用 MIT 许可证；Git 记录设计和工程规范，软件版本与协议版本分别管理。文中接口名、配置名、目录布局和技术选型均为拟议设计，不代表已存在的功能。
+本文定义产品目标、模块职责、任务生命周期和完整验收标准。当前已实现部分 M0 传输 PoC，但尚未运行真实 Codespace 任务；实际可用范围以 [M0 开发说明](docs/M0.md)为准，其余内容仍是目标设计。项目采用 MIT 许可证，软件版本与协议版本分别管理。不要把下述完整接口表视为当前已注册工具。
+
+2026-10-13 实现说明：M0 采用 TypeScript/官方 MCP SDK 与 Python 标准库；仅允许已有 shared 实例的 reuse_only 探测。由于自动回收控制进程属于 M1，M0 不实现启动/创建。project_bind 暂以 projectId 直接指定本机绑定，不识别 localProjectRoot；ready 仅表示探测就绪。完整配置、项目识别、通用任务和资源管理仍按下文目标推进。
 
 ## 1. 已确认的产品目标
 
@@ -137,7 +139,7 @@ sequenceDiagram
 
 ## 4. 工程结构与模块边界
 
-建议技术基线：本地使用 **TypeScript + Node.js 22 LTS 或更高受支持版本 + 官方 MCP SDK**；远端使用 **Python 3 标准库 runner**。这是初始建议，尚未通过跨平台 PoC 验证。
+当前 M0 技术基线：本地使用 **TypeScript + Node.js 22 或更高受支持版本 + 官方 MCP SDK**；远端使用 **Python 3 标准库 runner**。Windows Node 24 本地 PoC 已检查，其他平台及真实远端仍未验收。
 
 本地采用 stdio MCP，通过 `gh` 子进程访问 GitHub 与 Codespaces。远端 runner 随本地发布包分发，校验内容摘要后安装，不从未固定版本的网络脚本临时安装。缺少远端 Python、Git 或任务要求的工具时，返回具体缺失项。
 
@@ -687,7 +689,7 @@ accepted/preparing/queued/running → cancel_requested → cancelled
 
 测试分层：单元测试覆盖状态机、schema、路径/参数、聚合规则；契约测试用 fake gh/runner 覆盖 API 错误和响应丢失；Linux 容器集成测试验证 supervisor/取消/产物；真实 Codespaces 验收验证认证、SSH、后台存活、暂停恢复和 Docker 行为。不能用 mock 通过替代实际云端验证。
 
-当前状态：以上均为待实现的验收要求；真实 Codespaces、Windows/macOS/Linux 客户端、Docker 和普通任务测试均 **NOT RUN**。
+当前状态：以上为完整产品验收要求。Windows stdio/参数传递及部分模拟恢复检查已运行，见 [M0 证据矩阵](docs/M0.md#检查与证据2026-10-13)；不等同于完整 A01–A28 通过。真实 Codespaces、macOS/Linux 客户端、Docker 和普通任务仍为 **NOT RUN**。
 
 ## 13. 实施顺序与待核对决策
 

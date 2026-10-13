@@ -47,7 +47,7 @@ feat(protocol)!: version the runner cancellation response
 
 报告统一使用 PASS、FAIL、NOT RUN；未验证的平台、环境和用户自测范围必须写明。仅有 fake gh 或容器测试不能标记为“真实 Codespaces 已验证”。检查通过后若修改了相关内容，应重跑受影响检查。
 
-当前尚无源码、测试命令或 CI；不得把本规范描述成已部署的自动门禁。随着实现添加实际脚本与 CI，并同步更新此文档。
+当前已有 M0 源码：`npm ci`、`npm run typecheck`、`npm test`（含构建及 Node 检查），以及 `python tests/runner_test.py`。Python 集成测试在不满足 Linux 条件时明确跳过。Windows 进程树清理检查需允许测试进程终止自己的子进程；受限环境失败不得改报 PASS。尚无 CI，不得把本规范描述为远端自动门禁。结果和兼容范围见 [M0 开发说明](docs/M0.md)。
 
 ## 3. 分支与合并
 
@@ -64,7 +64,7 @@ feat(protocol)!: version the runner cancellation response
 |---|---|---|
 | 设计文档修订 | 文档页首 `0.x` 与日期，重大设计调整递增并说明 | 0.4，不代表软件发布 |
 | 软件发行 | SemVer：`MAJOR.MINOR.PATCH`，标签 `vX.Y.Z` | 尚无发行，不创建假 v0.0.0 标签 |
-| MCP 工具/runner/配置协议 | 显式协议/schema 版本及兼容矩阵 | 文档中的 schemaVersion=1 是提议，尚未实现 |
+| MCP 工具/runner/配置协议 | 显式协议/schema 版本及兼容矩阵 | M0 envelope/绑定/prepare schemaVersion=1、runner protocolVersion=1；完整任务配置仍是提议 |
 
 软件版本约定：
 

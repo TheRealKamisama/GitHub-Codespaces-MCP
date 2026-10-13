@@ -1,0 +1,25 @@
+{
+  "name": "github-codespace-mcp",
+  "version": "0.1.0-alpha.0",
+  "private": true,
+  "description": "Unreleased Codespaces-only MCP transport PoC",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc && node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "start": "node dist/cli.js serve --stdio"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "typescript": "7.0.2"
+  }
+}
