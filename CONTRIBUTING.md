@@ -62,7 +62,7 @@ feat(protocol)!: version the runner cancellation response
 
 | 版本 | 规则 | 当前状态 |
 |---|---|---|
-| 设计文档修订 | 文档页首 `0.x` 与日期，重大设计调整递增并说明 | 0.3，不代表软件发布 |
+| 设计文档修订 | 文档页首 `0.x` 与日期，重大设计调整递增并说明 | 0.4，不代表软件发布 |
 | 软件发行 | SemVer：`MAJOR.MINOR.PATCH`，标签 `vX.Y.Z` | 尚无发行，不创建假 v0.0.0 标签 |
 | MCP 工具/runner/配置协议 | 显式协议/schema 版本及兼容矩阵 | 文档中的 schemaVersion=1 是提议，尚未实现 |
 
@@ -103,3 +103,9 @@ feat(protocol)!: version the runner cancellation response
 - 开源账号归属不代表 GitHub 官方项目；README 不宣称官方背书。
 
 贡献前检查是否存在更具体的项目指令。发生任务范围冲突时，以维护者明确的当前指令为准，并同步调整相关文档。
+
+## 7. MCP 工程与语言约定
+
+后续实现遵循 [MCP 工程原则](docs/MCP_ENGINEERING_PRINCIPLES.md)：稳定英文工具契约、中英交互模板与结果说明、schema 校验、structuredContent、调用失败与任务失败分离、stdout 协议纯净、真实能力协商、持久化幂等与自动回收。
+
+修改模板或翻译时不改变权限、执行计划、错误码或任务去重逻辑；中英示例保持行为等价。修改协议时更新 schema、契约测试、兼容说明和 Changelog。首次公开可安装预览版前补齐英文入门文档，不把当前中文文档状态描述为已交付完整双语文档。
