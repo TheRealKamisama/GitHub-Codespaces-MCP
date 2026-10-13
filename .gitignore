@@ -1,0 +1,37 @@
+# Dependencies and generated builds
+node_modules/
+dist/
+build/
+coverage/
+.cache/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Credentials and machine-local settings
+.env
+.env.*
+!.env.example
+.aws/
+.codex/
+*.pem
+*.key
+
+# Project task definitions remain trackable; local runtime state does not.
+.codespace-mcp/local/
+.codespace-mcp/state/
+.codespace-mcp/jobs/
+.codespace-mcp/archives/
+.codespace-mcp/inputs/
+artifacts/
+*.log
+*.log.*
+*.tsbuildinfo
+
+# Editor / OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
