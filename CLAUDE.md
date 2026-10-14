@@ -84,7 +84,7 @@ M1 首个切片新增（详见 docs/M1.md）：
 | Linux 客户端（2026-10-14） | PASS；SteamOS Node 24.21.0，类型检查/构建、21 项 Node（Linux 端到端在主机跳过）、Python portable 7 项 |
 | Linux runner 与任务集成 | PASS，容器；podman python:3.12-bookworm + tmpfs `/workspaces`，M0 安装/诊断与 M1 精确 SHA/取消/超时/排队/中断；本地 bare 仓库替代 github.com |
 | Linux 端到端 | PASS，容器；真实 Application→Runner→bootstrap→runner，仅 gh/SSH 为桩 |
-| 真实 Codespaces（2026-10-14） | PASS，部分；用户授权在本仓库创建实例 `mcp-live-test-w99669w746xc54qr`（已停止，未删除）。prepare、跨会话存活、私有 fetch、精确 SHA、本项目 CI、示例、Docker/Postgres、取消、排队、停止重启 interrupted。详见 docs/M1.md |
+| 真实 Codespaces（2026-10-14） | PASS，部分；用户授权在本仓库创建实例 `mcp-live-test-w99669w746xc54qr`（测试后已按用户要求删除）。prepare、跨会话存活、私有 fetch、精确 SHA、本项目 CI、示例、Docker/Postgres、取消、排队、停止重启 interrupted。详见 docs/M1.md |
 | 产物、自动导出与回收 | 未实现 |
 
 ```sh
