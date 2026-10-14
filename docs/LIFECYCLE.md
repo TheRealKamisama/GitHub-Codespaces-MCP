@@ -59,7 +59,7 @@
 
 ## 真实 Codespaces 验证（2026-10-15）
 
-经用户授权在本仓库创建实例 `mcp-lifecycle-test-w54xp57w6f7wv`（basicLinux32gb），通过真实 MCP stdio 服务与真实后台控制进程验证；控制进程由工具调用启动，测试期间本地不再调用任何工具。
+经用户授权在本仓库创建实例 `mcp-lifecycle-test-w54xp57w6f7wv`（basicLinux32gb，测试后已按用户要求删除），通过真实 MCP stdio 服务与真实后台控制进程验证；控制进程由工具调用启动，测试期间本地不再调用任何工具。
 
 | 场景 | 结果 | 实际观察 |
 |---|---|---|
