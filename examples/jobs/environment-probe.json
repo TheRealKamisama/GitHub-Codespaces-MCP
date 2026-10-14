@@ -1,0 +1,38 @@
+{
+  "title": "Inspect what the Codespace actually provides",
+  "demonstrates": [
+    "probing optional tools without failing",
+    "no tool is assumed by the MCP itself"
+  ],
+  "requires": [
+    "sh"
+  ],
+  "checkedIn": "linux-container",
+  "expect": {
+    "state": "succeeded",
+    "summary": {
+      "execution": "PASS",
+      "verification": "NOT_CONFIGURED",
+      "cleanup": "NOT_CONFIGURED"
+    }
+  },
+  "plan": {
+    "timeoutSeconds": 120,
+    "steps": [
+      {
+        "id": "machine",
+        "role": "analysis",
+        "kind": "shell",
+        "shell": "sh",
+        "script": "uname -srm\necho \"cpus: $(getconf _NPROCESSORS_ONLN)\"\nhead -2 /proc/meminfo\ndf -h . | tail -1\n"
+      },
+      {
+        "id": "toolchains",
+        "role": "analysis",
+        "kind": "shell",
+        "shell": "sh",
+        "script": "for tool in git python3 node npm java go cargo docker; do\n  if command -v \"$tool\" >/dev/null 2>&1; then printf '%-8s %s\\n' \"$tool\" \"$(\"$tool\" --version 2>&1 | head -1)\"; else printf '%-8s not installed\\n' \"$tool\"; fi\ndone\n"
+      }
+    ]
+  }
+}

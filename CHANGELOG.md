@@ -10,6 +10,7 @@
 
 ### Added
 
+- 示例场景（docs/SCENARIOS.md、examples/jobs/）：11 个仅使用通用步骤的 job 计划；6 个在 Linux 容器中实际运行并核对声明结果，Docker/Postgres/Node/Gradle/Rust 示例仅 schema 校验。runner 日志对被信号结束的步骤记录信号名。
 - 未发布 M1 首个切片：只读 `project_inspect`；`job_submit/get/logs/cancel` 在已推送的精确提交上异步执行 command/shell 多步骤任务，独立 worktree、进程组取消与确认、cleanup 步骤、execution/verification/cleanup 分别汇总、requestId 幂等与响应丢失对账、项目运行槽。Linux 容器集成与端到端检查通过，真实 Codespaces 仍 NOT RUN；产物与自动回收未实现。详见 docs/M1.md。
 - M0 首次在 Linux 客户端与 Linux 容器（可写 `/workspaces`）中通过检查；新增 `scripts/linux-container-test.sh`。
 

@@ -137,6 +137,15 @@ def commit(work, files, message):
     return git(work, 'rev-parse', 'HEAD')
 
 
+SAMPLE_TEST = '''import unittest
+
+
+class Sample(unittest.TestCase):
+    def test_arithmetic(self):
+        self.assertEqual(sum([1, 2, 3]), 6)
+'''
+
+
 def marker_processes(marker):
     found = []
     for entry in Path('/proc').iterdir():
@@ -161,7 +170,7 @@ class LinuxJobs(unittest.TestCase):
         self.work = self.root / 'work'
         git(self.root, 'init', '-q', str(self.work))
         git(self.work, 'remote', 'add', 'origin', str(remote))
-        self.base = commit(self.work, {'tracked.txt': 'original\n', 'sub/dir/keep.txt': 'x\n'}, 'base')
+        self.base = commit(self.work, {'tracked.txt': 'original\n', 'sub/dir/keep.txt': 'x\n', 'tests/test_sample.py': SAMPLE_TEST}, 'base')
         git(self.work, 'push', '-q', 'origin', 'HEAD:refs/heads/main')
         # The branch moves on after the requested commit was pushed.
         self.tip = commit(self.work, {'tracked.txt': 'newer\n'}, 'tip')
@@ -322,6 +331,26 @@ class LinuxJobs(unittest.TestCase):
         done = self.settle(quick['jobId'])
         self.assertEqual((done['state'], done['summary']), ('succeeded', {'execution': 'PASS', 'verification': 'NOT_CONFIGURED', 'cleanup': 'NOT_CONFIGURED'}))
         self.assertFalse(done['source']['sourceModified'])
+
+    def test_runnable_examples_deliver_their_documented_outcome(self):
+        examples = sorted((ROOT / 'examples/jobs').glob('*.json'))
+        runnable = [json.loads(path.read_text()) | {'name': path.stem} for path in examples]
+        runnable = [e for e in runnable if e['checkedIn'] == 'linux-container']
+        self.assertGreaterEqual(len(runnable), 5)
+        for example in runnable:
+            with self.subTest(example=example['name']):
+                job = self.job(example['plan']['steps'], timeout=example['plan']['timeoutSeconds'])
+                self.assertTrue(self.call('job_submit', job=job)['ok'])
+                data = self.settle(job['jobId'], limit=120)
+                expect = example['expect']
+                self.assertEqual(data['state'], expect['state'], self.logs(job['jobId'], 65536)[0])
+                self.assertEqual(data['summary'], expect['summary'])
+                self.assertEqual(data['errorCode'], expect.get('errorCode'))
+                for step_id, state in expect.get('steps', {}).items():
+                    self.assertEqual(next(s['state'] for s in data['steps'] if s['id'] == step_id), state, step_id)
+                self.assertTrue(self.logs(job['jobId'], 65536)[1]['complete'])
+        # The service demo leaves its server running at the end of the step; the runner must have ended it.
+        self.assertEqual([p for p in marker_processes('18765')], [])
 
     def test_lost_supervisor_is_interrupted_not_rerun(self):
         job = self.job([{'id': 'long', 'role': 'test', 'argv': ['sh', '-c', 'sleep 3003', 'm1-marker-lost']}])

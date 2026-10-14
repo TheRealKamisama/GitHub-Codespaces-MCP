@@ -1,0 +1,54 @@
+{
+  "title": "Node.js install, lint and test",
+  "demonstrates": [
+    "ordinary toolchain via argv",
+    "CI environment variables",
+    "optional lint"
+  ],
+  "requires": [
+    "node",
+    "npm"
+  ],
+  "checkedIn": "schema-only",
+  "plan": {
+    "timeoutSeconds": 1800,
+    "steps": [
+      {
+        "id": "install",
+        "role": "setup",
+        "kind": "command",
+        "argv": [
+          "npm",
+          "ci"
+        ],
+        "env": {
+          "CI": "true"
+        }
+      },
+      {
+        "id": "lint",
+        "role": "test",
+        "kind": "command",
+        "argv": [
+          "npm",
+          "run",
+          "lint",
+          "--if-present"
+        ],
+        "optional": true
+      },
+      {
+        "id": "test",
+        "role": "test",
+        "kind": "command",
+        "argv": [
+          "npm",
+          "test"
+        ],
+        "env": {
+          "CI": "true"
+        }
+      }
+    ]
+  }
+}

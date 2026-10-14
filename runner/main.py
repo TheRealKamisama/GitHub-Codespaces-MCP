@@ -495,7 +495,8 @@ class Supervisor:
         self.write_step(entry, state=state, errorCode=code, endedAt=time.time(),
                         exitCode=returncode if returncode is not None and returncode >= 0 else None,
                         signal=signal.Signals(-returncode).name if returncode is not None and returncode < 0 else None)
-        self.note(f'==> step {step["id"]} {state}' + (f' exit={returncode}' if returncode is not None else ''))
+        outcome = '' if returncode is None else f' signal={signal.Signals(-returncode).name}' if returncode < 0 else f' exit={returncode}'
+        self.note(f'==> step {step["id"]} {state}{outcome}')
         return state, reason
 
     def run(self):

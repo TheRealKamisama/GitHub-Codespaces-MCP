@@ -1,0 +1,42 @@
+{
+  "title": "Rust build and test with the committed lockfile",
+  "demonstrates": [
+    "reproducible inputs from the exact commit (--locked)",
+    "step-level environment"
+  ],
+  "requires": [
+    "cargo"
+  ],
+  "checkedIn": "schema-only",
+  "plan": {
+    "timeoutSeconds": 3600,
+    "steps": [
+      {
+        "id": "build",
+        "role": "build",
+        "kind": "command",
+        "argv": [
+          "cargo",
+          "build",
+          "--locked"
+        ],
+        "env": {
+          "CARGO_TERM_COLOR": "never"
+        }
+      },
+      {
+        "id": "test",
+        "role": "test",
+        "kind": "command",
+        "argv": [
+          "cargo",
+          "test",
+          "--locked"
+        ],
+        "env": {
+          "CARGO_TERM_COLOR": "never"
+        }
+      }
+    ]
+  }
+}

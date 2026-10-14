@@ -44,6 +44,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `runner/main.py` | 握手、generation、固定十秒诊断；`Jobs`（提交/查询/日志/取消）与 detached `Supervisor`（fetch→精确 SHA worktree→运行槽→步骤进程组→cleanup）。status.json 只由 supervisor 写，取消只写标记文件，interrupted/stale 在读取时计算 |
 | `scripts/build.mjs` | 复制 runner，生成 version/Git SHA/dirty/runner 摘要元数据 |
 | `tests/` | Node 本地/模拟/SDK 契约（`jobs.test.mjs` 为 job/inspect）、Linux-only 端到端（`e2e_linux.test.mjs`，gh 桩替代 SSH），以及 Python portable/Linux 集成测试 |
+| `examples/jobs/` | 可提交的 job 计划示例（docs/SCENARIOS.md）；`checkedIn: linux-container` 的示例由 `runner_test.py` 实际运行并核对 `expect`，其余由 `tests/examples.test.mjs` 做 schema 校验。新增示例必须如实标注 |
 | `scripts/linux-container-test.sh` | 在一次性容器（tmpfs `/workspaces`）中运行 Linux 集成与端到端检查 |
 
 调用链（需跨文件才能看清）：`cli.ts` 读取 `dist/build.json`（缺失即无法启动，必须先构建），状态目录为 `CODESPACE_MCP_STATE_DIR`，否则 `%LOCALAPPDATA%` 或 `~/.local/state` 下的 `github-codespace-mcp` → `mcp.ts` 把工具调用分派到 `Application` → `Application` 经 `Github`（所有 gh 调用都走 `transport/process.ts` 的 `execute`）和 `RunnerPort` 工作。`Runner.call` 每次都重新校验 `dist/runner/main.py` 摘要，再通过 `gh codespace ssh` 下发**固定命令**（base64 内嵌的 `bootstrap.py`）；action、binding、build 元数据与 runner 源码全部走 stdin JSON。握手要求远端 version/gitSha/dirty/runnerSha256 与本地构建完全一致，因此改动 `runner/main.py` 或产生新提交后都必须重新构建。`Github` 的 `Executor` 和 `RunnerPort` 是测试注入模拟 gh/runner 的接缝。

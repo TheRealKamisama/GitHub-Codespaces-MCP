@@ -1,0 +1,61 @@
+{
+  "title": "Per-step timeout on an optional check; the job still passes",
+  "demonstrates": [
+    "step timeoutSeconds",
+    "optional steps do not fail the job",
+    "cleanup always runs"
+  ],
+  "requires": [
+    "sh"
+  ],
+  "checkedIn": "linux-container",
+  "expect": {
+    "state": "succeeded",
+    "summary": {
+      "execution": "PASS",
+      "verification": "PASS",
+      "cleanup": "PASS"
+    },
+    "steps": {
+      "slow-optional-check": "timed_out",
+      "required-check": "passed",
+      "tidy": "passed"
+    }
+  },
+  "plan": {
+    "timeoutSeconds": 300,
+    "steps": [
+      {
+        "id": "slow-optional-check",
+        "role": "test",
+        "kind": "command",
+        "argv": [
+          "sleep",
+          "60"
+        ],
+        "timeoutSeconds": 2,
+        "optional": true
+      },
+      {
+        "id": "required-check",
+        "role": "test",
+        "kind": "command",
+        "argv": [
+          "sh",
+          "-c",
+          "test -n \"$CODESPACE_MCP_JOB_ID\" && echo \"job $CODESPACE_MCP_JOB_ID\""
+        ]
+      },
+      {
+        "id": "tidy",
+        "role": "cleanup",
+        "kind": "command",
+        "argv": [
+          "sh",
+          "-c",
+          "echo cleanup ran"
+        ]
+      }
+    ]
+  }
+}

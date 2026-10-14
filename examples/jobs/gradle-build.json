@@ -1,0 +1,39 @@
+{
+  "title": "Java/Gradle build and test",
+  "demonstrates": [
+    "long build with a job deadline",
+    "--no-daemon so no process outlives its step"
+  ],
+  "requires": [
+    "java",
+    "gradle wrapper in the repository"
+  ],
+  "checkedIn": "schema-only",
+  "plan": {
+    "timeoutSeconds": 3600,
+    "steps": [
+      {
+        "id": "build",
+        "role": "build",
+        "kind": "command",
+        "argv": [
+          "./gradlew",
+          "--no-daemon",
+          "--console=plain",
+          "assemble"
+        ]
+      },
+      {
+        "id": "test",
+        "role": "test",
+        "kind": "command",
+        "argv": [
+          "./gradlew",
+          "--no-daemon",
+          "--console=plain",
+          "test"
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "title": "Start a throwaway HTTP service and test against it in one step",
+  "demonstrates": [
+    "background process inside a step",
+    "readiness wait",
+    "leftover processes are cleaned up when the step ends"
+  ],
+  "requires": [
+    "sh",
+    "python3"
+  ],
+  "checkedIn": "linux-container",
+  "expect": {
+    "state": "succeeded",
+    "summary": {
+      "execution": "PASS",
+      "verification": "PASS",
+      "cleanup": "NOT_CONFIGURED"
+    }
+  },
+  "plan": {
+    "timeoutSeconds": 300,
+    "steps": [
+      {
+        "id": "http-smoke",
+        "role": "test",
+        "kind": "shell",
+        "shell": "sh",
+        "timeoutSeconds": 120,
+        "script": "python3 -m http.server 18765 --bind 127.0.0.1 >/dev/null 2>&1 &\npython3 - <<'PY'\nimport time, urllib.request\nfor _ in range(50):\n    try:\n        body = urllib.request.urlopen(\"http://127.0.0.1:18765/\", timeout=1).read().decode()\n        break\n    except OSError:\n        time.sleep(0.2)\nelse:\n    raise SystemExit(\"service never became ready\")\nassert \"Directory listing\" in body, body[:200]\nprint(\"service answered; smoke test passed\")\nPY\n# The server is still running here; the runner ends the whole process group after the step.\n"
+      }
+    ]
+  }
+}

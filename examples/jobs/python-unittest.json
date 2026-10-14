@@ -1,0 +1,54 @@
+{
+  "title": "Python unit tests on the exact pushed commit",
+  "demonstrates": [
+    "exact-commit checkout",
+    "command steps without a shell",
+    "verification from test steps"
+  ],
+  "requires": [
+    "python3"
+  ],
+  "checkedIn": "linux-container",
+  "expect": {
+    "state": "succeeded",
+    "summary": {
+      "execution": "PASS",
+      "verification": "PASS",
+      "cleanup": "NOT_CONFIGURED"
+    }
+  },
+  "plan": {
+    "timeoutSeconds": 600,
+    "steps": [
+      {
+        "id": "compile",
+        "role": "build",
+        "kind": "command",
+        "argv": [
+          "python3",
+          "-m",
+          "compileall",
+          "-q",
+          "."
+        ]
+      },
+      {
+        "id": "unit",
+        "role": "test",
+        "kind": "command",
+        "argv": [
+          "python3",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "tests",
+          "-v"
+        ],
+        "env": {
+          "PYTHONDONTWRITEBYTECODE": "1"
+        }
+      }
+    ]
+  }
+}

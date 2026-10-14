@@ -177,7 +177,7 @@ tests/
   integration/
   live-codespaces/
 docs/
-examples/
+examples/             可提交的 job 计划示例，见 docs/SCENARIOS.md
 ```
 
 | 模块 | 输入 → 输出 | 必须守住的边界 |
