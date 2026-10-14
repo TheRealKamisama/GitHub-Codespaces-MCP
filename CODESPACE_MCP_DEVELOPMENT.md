@@ -733,4 +733,4 @@ accepted/preparing/queued/running → cancel_requested → cancelled
 - **[S9]** [GitHub：端口转发](https://docs.github.com/en/codespaces/developing-in-a-codespace/forwarding-ports-in-your-codespace) — 本地转发、端口可见性及认证。
 - **[S10]** [GitHub：Codespaces 计费](https://docs.github.com/en/billing/concepts/product-billing/github-codespaces) — 运行计算用量与实例存储用量分别计量。
 
-平台能力仍只经过文档核查，未创建 Codespace 或运行远端任务。本项目的设计、开源许可证和贡献规范纳入本地 Git；尚未创建远端仓库、推送代码或发布软件。
+Codespaces 平台行为仍未经过真实实例验收，未创建 Codespace 或运行远端任务。M0 本地及只读身份验证见 docs/M0.md。2026-10-14 按用户授权建立私有远端仓库 TheRealKamisama/GitHub-Codespaces-MCP 用于代码交接；未发布软件，私有仓库推送不代表云端任务验证。

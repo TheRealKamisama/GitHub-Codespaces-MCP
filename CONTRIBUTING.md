@@ -96,7 +96,7 @@ feat(protocol)!: version the runner cancellation response
 ## 6. 授权与账号归属
 
 - 项目正式名称：**GitHub Codespace MCP**。
-- 计划开源账号：[TheRealKamisama](https://github.com/TheRealKamisama)。建议仓库 slug：`github-codespace-mcp`，尚未创建/绑定。
+- 仓库归属：[TheRealKamisama/GitHub-Codespaces-MCP](https://github.com/TheRealKamisama/GitHub-Codespaces-MCP)，2026-10-14 按用户授权建立为 Private；后续公开、发包及发行仍需授权。
 - 当前用户要求从一开始进行 Git 管理，授权建立本地基线 Commit；此后在已授权的开发任务范围内按本规则维护本地提交。
 - “将会开源”不等于现在创建公共仓库、推送、打标签或发布包。执行这些外部操作需要该次请求或已有明确授权。
 - Git 作者使用贡献者自身身份；本项目首次提交采用维护者 GitHub 账号名和 noreply 邮箱，仅设置 repository-local 配置，不修改全局配置，不编造 AI 联署作者。

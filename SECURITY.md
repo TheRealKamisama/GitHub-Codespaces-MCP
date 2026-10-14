@@ -6,7 +6,7 @@
 
 ## 报告安全问题
 
-公共仓库建立后，应在首次预览版发布前启用 GitHub Private Vulnerability Reporting，并核对私密报告入口。当前仓库尚未创建，因此该入口尚不可用，也没有已公布的替代安全邮箱。
+当前已有私有仓库，尚未公开。公开后应在首次预览版发布前启用 GitHub Private Vulnerability Reporting，并核对私密报告入口；当前没有已核验的公开安全报告入口，也没有已公布的替代安全邮箱。
 
 不要在公开 Issue、PR 或日志中贴出 token、私钥、私人数据或可直接利用的漏洞细节。私密入口不可用时，可以通过维护者的 [GitHub 主页](https://github.com/TheRealKamisama)查询已公布的联系渠道；如果没有私密渠道，仅公开请求建立安全联系，不附漏洞细节。
 
@@ -16,6 +16,6 @@
 
 This project has an unreleased M0 transport PoC and no software releases or live Codespaces security validation. See [M0 limitations](docs/M0.md) and [CONTRIBUTING](CONTRIBUTING.md) for the planned version support policy. No response or remediation SLA is promised.
 
-GitHub Private Vulnerability Reporting must be enabled and checked before the first public preview. The public repository has not been created, so this reporting channel is not available yet, and no alternative security email has been published.
+The repository currently exists as a private repository. GitHub Private Vulnerability Reporting must be enabled and checked after making it public and before the first public preview. No public security reporting channel has been verified, and no alternative security email has been published.
 
 Do not publish credentials, private data, or exploitable details in issues, pull requests, or logs. Check the [maintainer's GitHub profile](https://github.com/TheRealKamisama) for an established private contact. If none exists, request a private reporting channel without disclosing the vulnerability. Include affected versions, reproduction conditions, impact, and a redacted minimal example in the private report. Revoke or rotate exposed credentials immediately. Coordinate remediation and disclosure privately before publishing a sanitized advisory.

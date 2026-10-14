@@ -6,6 +6,8 @@
 
 ### Added
 
+- Claude 接手 Summary（CLAUDE.md），记录 M0 实现、验证边界与后续路线；按授权建立 GitHub-Codespaces-MCP 私有仓库用于交接，未发布软件。
+
 - 未发布 M0 传输 PoC：官方 SDK stdio、严格中英结构化工具结果、gh 身份核验、版本化本机绑定、reuse_only prepare 持久化与摘要 runner 安装入口。
 - 固定十秒 detached runner 诊断及相同请求重连查询；Windows 本地与模拟检查已通过，Linux/真实 SSH 存活仍 NOT RUN。
 - 源码构建与锁定依赖、Windows 子进程参数/有界清理、状态原子写入、SDK 契约测试、Python 单元及待运行 Linux 集成测试；详见 docs/M0.md。

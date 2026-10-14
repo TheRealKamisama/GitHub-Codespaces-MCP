@@ -6,7 +6,7 @@
 
 已实现 stdio MCP、gh 身份检查、已有实例的本机绑定、reuse_only prepare 和固定十秒 runner 诊断。Windows 本地与模拟检查已运行；通用任务、精确 SHA、自动导出/回收尚未实现。源码运行方式、真实/模拟证据与剩余边界见 [M0 开发说明](docs/M0.md)。
 
-项目计划在 [TheRealKamisama](https://github.com/TheRealKamisama) 账号下开源，许可证为 [MIT](LICENSE)。建议仓库标识为 `github-codespace-mcp`；具体远端仓库尚未创建或绑定，npm 包名也尚未预留。
+远端仓库为 [TheRealKamisama/GitHub-Codespaces-MCP](https://github.com/TheRealKamisama/GitHub-Codespaces-MCP)，当前为 **Private**。项目许可证为 [MIT](LICENSE)，后续公开需另行授权；npm 包名尚未预留，没有已发布包。
 
 ## 目标流程
 
@@ -18,6 +18,8 @@
 仅覆盖 GitHub Codespaces。Docker 构建和容器测试是可选任务模板，普通远端任务无需 Docker。
 
 ## 项目文档
+
+- [Claude 交接 Summary](CLAUDE.md)：当前实现、历史验证证据、未完成项、接手顺序与授权边界。
 
 - [M0 开发 PoC / Development PoC](docs/M0.md)：当前实际工具、源码构建、恢复边界和检查结果。
 - [快速入门 / Quick Start](docs/QUICKSTART.md)：中英文准备步骤与待实现的完整任务流程，当前无可安装发行版。
