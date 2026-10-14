@@ -47,7 +47,7 @@ feat(protocol)!: version the runner cancellation response
 
 报告统一使用 PASS、FAIL、NOT RUN；未验证的平台、环境和用户自测范围必须写明。仅有 fake gh 或容器测试不能标记为“真实 Codespaces 已验证”。检查通过后若修改了相关内容，应重跑受影响检查。
 
-当前已有 M0 源码：`npm ci`、`npm run typecheck`、`npm test`（含构建及 Node 检查），以及 `python tests/runner_test.py`。Python 集成测试在不满足 Linux 条件时明确跳过。Windows 进程树清理检查需允许测试进程终止自己的子进程；受限环境失败不得改报 PASS。尚无 CI，不得把本规范描述为远端自动门禁。结果和兼容范围见 [M0 开发说明](docs/M0.md)。
+当前已有 M0 与 M1 首个切片源码：`npm ci`、`npm run typecheck`、`npm test`（含构建及 Node 检查），以及 `python tests/runner_test.py`。Python 集成测试和 Node Linux 端到端测试在不满足 Linux/可写 `/workspaces` 条件时明确跳过；构建后可用 `scripts/linux-container-test.sh`（podman 或 docker）在一次性容器中运行它们，结果属于容器证据而非 Codespaces 验收。Windows 进程树清理检查需允许测试进程终止自己的子进程；受限环境失败不得改报 PASS。尚无 CI，不得把本规范描述为远端自动门禁。结果和兼容范围见 [M0 开发说明](docs/M0.md) 与 [M1 首个切片](docs/M1.md)。
 
 ## 3. 分支与合并
 

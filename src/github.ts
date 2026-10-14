@@ -8,8 +8,8 @@ export const codespaceSchema = z.object({ name: z.string(), state: z.string(), r
 export type Codespace = z.infer<typeof codespaceSchema>;
 export class Github {
   constructor(private run: Executor = execute, private env: NodeJS.ProcessEnv = process.env) {}
-  async command(args: string[], input?: string) {
-    try { return await this.run('gh', args, { input, env: { ...this.env, GH_HOST: 'github.com', GH_PROMPT_DISABLED: '1', GH_PAGER: 'cat', NO_COLOR: '1' } }); }
+  async command(args: string[], input?: string, limits: { timeoutMs?: number; maxBytes?: number } = {}) {
+    try { return await this.run('gh', args, { input, ...limits, env: { ...this.env, GH_HOST: 'github.com', GH_PROMPT_DISABLED: '1', GH_PAGER: 'cat', NO_COLOR: '1' } }); }
     catch (e) { if (e instanceof AppError && e.code === 'EXECUTABLE_UNAVAILABLE') throw new AppError('GH_NOT_FOUND'); throw e; }
   }
   async json(args: string[]) {

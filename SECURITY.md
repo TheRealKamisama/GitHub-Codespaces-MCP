@@ -2,7 +2,7 @@
 
 ## 当前状态与支持版本
 
-项目已有未发布的 M0 传输 PoC，没有软件发行或经真实 Codespaces 验证的安全运行能力。M0 边界见 [开发说明](docs/M0.md)。发行后的版本维护策略见 [贡献规则](CONTRIBUTING.md#9-开源维护与支持)。本政策不承诺漏洞响应或修复时限。
+项目已有未发布的 M0 传输 PoC 与 M1 首个切片，没有软件发行或经真实 Codespaces 验证的安全运行能力。边界见 [M0](docs/M0.md) 与 [M1](docs/M1.md)；任务步骤是用户命令，不是安全沙箱。发行后的版本维护策略见 [贡献规则](CONTRIBUTING.md#9-开源维护与支持)。本政策不承诺漏洞响应或修复时限。
 
 ## 报告安全问题
 
@@ -14,7 +14,7 @@
 
 ## English
 
-This project has an unreleased M0 transport PoC and no software releases or live Codespaces security validation. See [M0 limitations](docs/M0.md) and [CONTRIBUTING](CONTRIBUTING.md) for the planned version support policy. No response or remediation SLA is promised.
+This project has an unreleased M0 transport PoC and M1 slice 1, and no software releases or live Codespaces security validation. Job steps are user commands, not a sandbox. See [M0 limitations](docs/M0.md), [M1 slice 1](docs/M1.md) and [CONTRIBUTING](CONTRIBUTING.md) for the planned version support policy. No response or remediation SLA is promised.
 
 The repository currently exists as a private repository. GitHub Private Vulnerability Reporting must be enabled and checked after making it public and before the first public preview. No public security reporting channel has been verified, and no alternative security email has been published.
 

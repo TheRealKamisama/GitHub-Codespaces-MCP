@@ -10,6 +10,10 @@ import sys
 import tempfile
 
 
+ACTIONS = ('handshake', 'diagnostic_start', 'diagnostic_get', 'job_submit', 'job_get', 'job_cancel', 'job_logs')
+FORWARDED = ('probeId', 'job', 'jobId', 'cursor', 'maxBytes', 'waitSeconds')
+
+
 def require(condition, code):
     if not condition:
         raise ValueError(code)
@@ -42,10 +46,10 @@ def atomic(path, data):
 def main():
     require(sys.platform == 'linux', 'PLATFORM_UNSUPPORTED')
     import fcntl
-    raw = sys.stdin.buffer.read(262145)
-    require(len(raw) <= 262144, 'STATE_INVALID')
+    raw = sys.stdin.buffer.read(524289)
+    require(len(raw) <= 524288, 'STATE_INVALID')
     request = json.loads(raw)
-    require(request['protocolVersion'] == 1 and request['action'] in ('handshake', 'diagnostic_start', 'diagnostic_get'), 'RUNNER_INCOMPATIBLE')
+    require(request['protocolVersion'] == 1 and request['action'] in ACTIONS, 'RUNNER_INCOMPATIBLE')
     binding, build = request['binding'], request['build']
     require(os.environ.get('CODESPACE_NAME') == binding['codespaceName'], 'CODESPACE_IDENTITY_MISMATCH')
     require(shutil.which('git') is not None, 'CAPABILITY_MISSING')
@@ -89,7 +93,12 @@ def main():
             require(json.loads(metadata.read_text()) == build, 'RUNNER_INCOMPATIBLE')
         else:
             atomic(metadata, json.dumps(build).encode())
-    result = subprocess.run([sys.executable, str(executable)], input=json.dumps({'protocolVersion': 1, 'action': request['action'], 'probeId': request.get('probeId'), 'root': str(managed)}), text=True, capture_output=True, timeout=6)
+    forwarded = {key: request[key] for key in FORWARDED if key in request}
+    payload = {**forwarded, 'protocolVersion': 1, 'action': request['action'], 'root': str(managed),
+               'binding': {'projectId': binding['projectId'], 'repository': binding['repository']}}
+    wait = request.get('waitSeconds', 0)
+    require(isinstance(wait, int) and 0 <= wait <= 20, 'STATE_INVALID')
+    result = subprocess.run([sys.executable, str(executable)], input=json.dumps(payload), text=True, capture_output=True, timeout=10 + wait)
     require(result.returncode == 0, 'RUNNER_FAILED')
     print(result.stdout.strip())
 

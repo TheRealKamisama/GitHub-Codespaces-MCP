@@ -6,6 +6,9 @@
 
 ### Added
 
+- 未发布 M1 首个切片：只读 `project_inspect`；`job_submit/get/logs/cancel` 在已推送的精确提交上异步执行 command/shell 多步骤任务，独立 worktree、进程组取消与确认、cleanup 步骤、execution/verification/cleanup 分别汇总、requestId 幂等与响应丢失对账、项目运行槽。Linux 容器集成与端到端检查通过，真实 Codespaces 仍 NOT RUN；产物与自动回收未实现。详见 docs/M1.md。
+- M0 首次在 Linux 客户端与 Linux 容器（可写 `/workspaces`）中通过检查；新增 `scripts/linux-container-test.sh`。
+
 - Claude 接手 Summary（CLAUDE.md），记录 M0 实现、验证边界与后续路线；按授权建立 GitHub-Codespaces-MCP 私有仓库用于交接，未发布软件。
 
 - 未发布 M0 传输 PoC：官方 SDK stdio、严格中英结构化工具结果、gh 身份核验、版本化本机绑定、reuse_only prepare 持久化与摘要 runner 安装入口。

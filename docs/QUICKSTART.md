@@ -1,6 +1,6 @@
 # 快速入门 / Quick Start
 
-**当前状态：已有可从源码构建的 M0 传输 PoC，没有可安装发行包。源码运行见 [M0 开发说明](M0.md)；下面的完整任务流程仍是预期体验，尚不能作为已可运行的操作教程。**
+**当前状态：已有可从源码构建的 M0 传输 PoC 与 M1 首个切片（精确提交任务），没有可安装发行包。源码运行见 [M0 开发说明](M0.md) 与 [M1 首个切片](M1.md)；下面的完整任务流程仍是预期体验，尚不能作为已可运行的操作教程。**
 
 ## 中文
 
@@ -36,7 +36,7 @@ gh auth status
 
 ## English
 
-**An unreleased M0 transport PoC can now be built from source; no installable release is available. See [M0 development instructions](M0.md). The complete task workflow below remains planned, not a working tutorial.**
+**An unreleased M0 transport PoC and the first M1 slice (exact-revision jobs) can be built from source; no installable release is available. See [M0 development instructions](M0.md) and [M1 slice 1](M1.md). The complete task workflow below remains planned, not a working tutorial.**
 
 ### Prepare now
 
