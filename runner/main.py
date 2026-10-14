@@ -13,7 +13,7 @@ import tempfile
 import threading
 import time
 
-TOKEN_VARIABLES = ('GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN')
+TOKEN_VARIABLES = ('GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GITHUB_CODESPACE_TOKEN')
 TERMINAL = ('succeeded', 'failed', 'timed_out', 'cancelled', 'interrupted')
 HEARTBEAT_SECONDS = 2
 STALE_SECONDS = 10
@@ -622,7 +622,7 @@ def main(request):
         subprocess.Popen([sys.executable, str(Path(__file__).resolve()), '--worker', str(path)],
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          start_new_session=True, close_fds=True,
-                         env={k: v for k, v in os.environ.items() if k not in ('GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN')})
+                         env=without_tokens(os.environ))
         return status
 
 

@@ -3,6 +3,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -12,6 +13,32 @@ import tempfile
 
 ACTIONS = ('handshake', 'diagnostic_start', 'diagnostic_get', 'job_submit', 'job_get', 'job_cancel', 'job_logs')
 FORWARDED = ('probeId', 'job', 'jobId', 'cursor', 'maxBytes', 'waitSeconds')
+
+
+PLATFORM_ENV = '/workspaces/.codespaces/shared/.env'
+
+
+def platform_environment(environ, path=PLATFORM_ENV):
+    """Non-login `gh codespace ssh` sessions lack the Codespaces platform variables (CODESPACE_NAME, git token).
+
+    Login shells get them from profile scripts, but those may also run user dotfiles that write to stdout and
+    corrupt the protocol. Read the platform file directly instead; existing variables are never overridden.
+    """
+    if environ.get('CODESPACE_NAME'):
+        return dict(environ)
+    merged = dict(environ)
+    try:
+        with open(path, encoding='utf-8') as stream:
+            text = stream.read(65537)
+    except OSError:
+        return merged
+    if len(text) > 65536:
+        return merged
+    for line in text.splitlines():
+        key, separator, value = line.partition('=')
+        if separator and re.fullmatch('[A-Z_][A-Z0-9_]{0,127}', key) and key not in environ:
+            merged[key] = value
+    return merged
 
 
 def require(condition, code):
@@ -45,6 +72,7 @@ def atomic(path, data):
 
 def main():
     require(sys.platform == 'linux', 'PLATFORM_UNSUPPORTED')
+    os.environ.update(platform_environment(os.environ))
     import fcntl
     raw = sys.stdin.buffer.read(524289)
     require(len(raw) <= 524288, 'STATE_INVALID')

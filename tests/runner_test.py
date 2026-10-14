@@ -80,6 +80,20 @@ class PortableTests(unittest.TestCase):
             runner.validate_job(job, {**binding, 'projectId': 'other'})
         self.assertEqual(runner.safe_relative('./a//b/'), ['a', 'b'])
 
+    def test_platform_environment_fills_only_missing_codespace_variables(self):
+        spec = importlib.util.spec_from_file_location('bootstrap', ROOT / 'runner/bootstrap.py')
+        bootstrap = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(bootstrap)
+        with tempfile.TemporaryDirectory() as temporary:
+            env_file = Path(temporary) / '.env'
+            env_file.write_text('CODESPACE_NAME=space-1\nGITHUB_TOKEN=abc=def\nPATH=/evil\nnot a pair\nlower=x\nCODESPACE_NAME=space-1\n')
+            merged = bootstrap.platform_environment({'PATH': '/usr/bin'}, str(env_file))
+            self.assertEqual((merged['CODESPACE_NAME'], merged['GITHUB_TOKEN'], merged['PATH']), ('space-1', 'abc=def', '/usr/bin'))
+            self.assertNotIn('lower', merged)
+            self.assertEqual(bootstrap.platform_environment({'CODESPACE_NAME': 'set'}, str(env_file)), {'CODESPACE_NAME': 'set'})
+            self.assertEqual(bootstrap.platform_environment({}, str(Path(temporary) / 'missing')), {})
+        self.assertNotIn('GITHUB_CODESPACE_TOKEN', runner.without_tokens({'GITHUB_CODESPACE_TOKEN': 'x', 'KEEP': '1'}))
+
 
 @unittest.skipUnless(sys.platform == 'linux' and Path('/workspaces').is_dir() and os.access('/workspaces', os.W_OK), 'NOT RUN: Linux with writable /workspaces required')
 class LinuxIntegration(unittest.TestCase):
