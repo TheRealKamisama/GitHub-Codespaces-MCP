@@ -15,7 +15,7 @@
 3. MCP 在 Codespace 中检出精确提交，执行编译、测试、脚本或临时服务等任务。
 4. 下载日志和指定产物，自动停止受管 Codespace；可选导出后删除，释放后续存储占用。
 
-仅覆盖 GitHub Codespaces。Docker 构建和容器测试是可选任务模板，普通远端任务无需 Docker。
+仅覆盖 GitHub Codespaces。MCP 是通用 worker，不内置任何工具链的专用逻辑：Docker 构建和容器测试与 npm、Gradle 一样，由普通 command/shell 步骤调用，容器等进程组外资源由 cleanup 步骤按 job 标签清理；普通远端任务无需 Docker。
 
 ## 项目文档
 

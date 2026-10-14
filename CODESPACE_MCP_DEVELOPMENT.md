@@ -1,6 +1,8 @@
 # GitHub Codespace MCP 开发设计与代码边界
 
-文档版本：0.4，评审草案。更新日期：2026-10-13。此版本号不代表软件发行版本。
+文档版本：0.5，评审草案。更新日期：2026-10-14。此版本号不代表软件发行版本。
+
+0.5 变更：按用户确认，MCP 定位为通用 worker，**不设 Docker 专用模板或步骤类型**。Docker 构建与容器测试仍是受支持的验收场景，但通过通用 command/shell 步骤、job 标签、cleanup 步骤和产物收集完成；§7.3 改为“进程组外资源”，M3 不再包含 Docker 模板，A08/A12 改写为通用场景。取消确认只覆盖步骤进程组。
 
 0.4 变更：补充中英双语交互建议，以及 MCP 协议、工具契约、错误、安全和兼容性原则，见 [MCP 工程原则](docs/MCP_ENGINEERING_PRINCIPLES.md)。这些是拟实施设计，尚无运行实现。
 
@@ -20,11 +22,11 @@
 
 1. 只支持 Codespaces，不实现本地 Docker、DevPod、其他云厂商或普通 SSH 主机后端。
 2. 默认代码交接流程是 **本地 Commit → Push → Codespace 获取该提交 → 执行任务**。
-3. Docker 验证场景要求 **构建镜像，然后执行项目配置的容器内测试**。
+3. Docker 验证场景要求 **构建镜像，然后执行项目配置的容器内测试**。该场景由通用步骤满足，不需要 Docker 专用功能（见 §7.3）。
 4. 任务不限于 Docker；编译、测试、静态检查、脚本、数据处理和临时开发服务等远端任务都应能使用同一执行能力。
 5. 为控制 Codespaces 额度，本地 MCP 必须负责使用完成后的资源释放，不能依赖 Agent 记得手动停止实例。默认停止与可选删除的具体策略见 §5.4。
 
-核心定位：**面向本地 Agent 的 Codespaces 工作区管理与通用任务执行服务。** Docker 只是可选任务模板，不是产品核心依赖。
+核心定位：**面向本地 Agent 的 Codespaces 工作区管理与通用任务执行服务。** MCP 不内置任何工具链（Docker、npm、Gradle 等）的专用逻辑；它们都是任务步骤调用的普通命令，不是产品模块或核心依赖。
 
 ### 1.1 目标提示词
 
@@ -74,7 +76,7 @@
 - 异步执行、分段读取日志、查询状态、取消、客户端重连。
 - 收集文件产物、校验摘要、下载到本地。
 - 临时服务启动、就绪探测、任务内服务清理，以及显式端口转发。
-- Docker 构建与容器测试模板，复用通用任务系统。
+- Docker 构建与容器测试等任意工具链场景：由通用 command/shell 步骤、cleanup 步骤和产物收集完成，不设专用模板（§7.3）。
 - 明确区分构建成功、测试成功、未运行、执行中断和结果未知。
 - 成功、失败、超时或取消后的结果导出、任务资源清理及实例停止；可选的导出后删除策略；回收失败重试与可查询状态。
 
@@ -156,7 +158,6 @@ src/
   jobs/                任务计划、幂等、远端状态对账、日志游标
   lifecycle/           实例级租约、导出屏障、停止/删除、回收对账
   controller/          按需启动的本地后台回收进程、锁与有界重试
-  templates/           通用模板展开；docker 模板为可选模块
   artifacts/           产物索引、摘要、下载、目标路径检查
   ports/               本地转发进程与 lease 管理
   storage/             本地绑定、操作日志和 job locator
@@ -165,7 +166,6 @@ runner/
   supervisor.py        后台进程、租约、取消、超时、状态恢复
   source.py            clone/fetch/worktree、来源验证
   steps.py             command、shell、service 执行器
-  docker.py            Docker 模板所需资源管理与结果采集
   logs.py              持久化分段日志
   artifacts.py         产物快照和 manifest
 schemas/
@@ -183,14 +183,14 @@ examples/
 | 模块 | 输入 → 输出 | 必须守住的边界 |
 |---|---|---|
 | MCP 接口层 | schema 参数 → 结构化工具结果 | 不拼 shell、不直接执行业务、不根据日志文本推断成功 |
-| 应用编排层 | 用户用例 → 模块调用与状态推进 | 不依赖某个语言的编译器；Docker 是可选模板 |
+| 应用编排层 | 用户用例 → 模块调用与状态推进 | 不依赖某个语言的编译器或工具链；不含 Docker 等工具的专用分支 |
 | 认证层 | 本地 gh 环境 → 身份和能力摘要 | 不向模型返回 token、不全局切换用户登录态 |
 | Codespaces 层 | 账号、仓库、实例名 → 实例与操作状态 | 只处理 Codespaces；不包含源码编辑和构建逻辑 |
 | 传输层 | argv、协议 payload → 响应/文件 | 不把用户参数插入本地 shell 字符串 |
 | 源码层 | repository/ref/SHA → 隔离检出的工作目录 | 不使用隐式 pull/merge，不覆盖用户已有工作区 |
 | 任务层 | 不可变任务计划 → job/step 状态 | 幂等与重连不重复运行有副作用的任务 |
 | 执行器 | cwd/argv/env/期限 → 退出码与输出 | 管理进程树；不把 SSH 断开当任务取消 |
-| Docker 模板 | context/dockerfile/test spec → 步骤与镜像证据 | 无 Docker 任务不检查 Docker；不隐式 push 镜像 |
+| 进程组外资源 | job 标签、cleanup 步骤 → 清理结果 | 取消/超时只确认步骤进程组；容器等外部资源由 cleanup 步骤处理并单独报告，不推断已清理 |
 | 产物层 | manifest/artifactId → 本地文件及摘要 | 不把任意远端路径当下载接口、不静默覆盖本地文件 |
 | 端口层 | job/service/port → lease 与本地 URL | 默认私有；服务与隧道生命周期分开 |
 | 回收层 | 全实例租约、归档回执、回收策略 → release 状态 | 不把单个 job 结束当整台实例空闲；停止与删除分别确认 |
@@ -243,7 +243,7 @@ prepare 是可恢复状态推进接口：返回 operationId 和 `creating/starti
 
 任务必须有期限，首版建议默认 1 小时、单任务最大 8 小时；这不能保证实例剩余运行时间充足。runner 心跳是状态证据，不视为官方保活保证。Codespace 停止、重建、配额耗尽或运行上限导致的中断，必须体现在最终结果中。
 
-CPU/内存/磁盘规格和 Docker/Buildx 版本从当前实例探测。并发任务共享实例资源，目录隔离不等于 CPU、内存或凭据隔离。
+CPU/内存/磁盘规格从当前实例探测。不预先探测 Docker 等工具；任务需要时由步骤自行调用，缺失表现为该步骤失败。并发任务共享实例资源，目录隔离不等于 CPU、内存或凭据隔离。
 
 ### 5.4 使用完成后的资源释放
 
@@ -274,7 +274,7 @@ CPU/内存/磁盘规格和 Docker/Buildx 版本从当前实例探测。并发任
 
 #### 5.4.3 正常回收顺序
 
-1. 任务进入终态，冻结结果、日志及产物 manifest；执行 finally，结束本任务的进程、容器和临时服务。
+1. 任务进入终态，冻结结果、日志及产物 manifest；结束本任务的进程组与临时服务，执行 cleanup 步骤清理进程组外资源（如容器）。
 2. 控制进程自动将结果摘要、保留的日志片段和用户指定/required 产物下载到本机应用数据目录中的独立 job 归档，校验摘要并写入持久化归档回执。
 3. 自动导出只包含有名称、大小和配额的 manifest 项；不默认下载整个工作区、Docker 镜像或全部缓存。删除模式下，需保留的文件必须全部归档，未选择保留的数据必须有明确的可丢弃策略。
 4. 汇总全部租约；宽限期结束后，在回收锁内撤销新任务入口，关闭本工具剩余空闲隧道，发出停止/删除 API 请求。
@@ -374,7 +374,7 @@ submodule 和 Git LFS 必须作为明确配置处理：需要时初始化/拉取
 - `command`：程序及 argv 数组；默认不经过 shell。
 - `shell`：显式 shell 类型与脚本，适用于管道、循环和多命令组合；脚本作为文件上传并执行，不拼到 SSH 字符串中。
 - `service`：启动长期进程，以 TCP/HTTP/退出状态等规则确认就绪，保持到后续步骤完成或任务取消。
-- 可选模板步骤，如 `docker.build`、`docker.run`，由模板层转换为执行计划并登记需清理的资源。
+- 不设工具专用步骤类型（如 `docker.build`）。Docker、数据库容器等通过 command/shell 调用；进程组外资源的清理见 §7.3。
 
 步骤间持久的是任务文件与显式输出参数；前一步 `cd` 或 `export` 不隐式改变下一步进程。pipeline 输入、展开后的计划和配置摘要在接受任务时冻结。
 
@@ -389,24 +389,25 @@ submodule 和 Git LFS 必须作为明确配置处理：需要时初始化/拉取
 | Java/Gradle 编译测试 | command、缓存目录、报告收集 | JDK、项目 wrapper 所需环境 |
 | Python 测试或数据脚本 | 多步骤、环境变量、输入/产物 | Python/项目依赖 |
 | Node/Rust 构建、lint | command、退出码、日志 | Node/Rust 工具链 |
-| Docker 构建与容器测试 | Docker 模板、镜像标识、容器清理 | Docker daemon、Buildx |
+| Docker 构建与容器测试 | command/shell、job 标签、cleanup 步骤、报告产物 | Docker daemon（Buildx 等由项目自行调用） |
 | Web/API 集成测试 | service、ready 探测、后续测试步骤 | 项目运行环境 |
 | 性能基准与批处理 | 有期限的 job、结构化结果、产物 | 用户接受共享资源对结果的影响 |
 
 “支持通用任务”表示能运行符合 Codespaces 条件的命令，不表示自动理解每个工具的测试报告格式。缺少专用解析器时保留退出码、原始报告和“未解析”的标记。
 
-### 7.3 Docker 模板的具体边界
+### 7.3 进程组外资源与 Docker 用法
 
-- 明确 `dockerfile`、`context`、可选 target、非敏感 build args、平台、缓存策略。
-- 首版只承诺实例支持的单平台构建；多架构/QEMU 不自动安装或假定可用。
-- 使用 Buildx 时显式加载单平台结果，输出 plain 日志、image ID 和可用的 metadata。[S8]
-- 区分本地 image ID、镜像 manifest digest 与 registry digest；没有推送过镜像时不能伪造 registry digest。
-- 测试使用刚构建的 image ID，不使用可被其他任务覆盖的 `latest` 标签。
-- 明确测试 argv、entrypoint 处理和工作目录。应用生产镜像未包含测试依赖时，应配置测试 target 或专用测试镜像。
-- 测试报告经显式挂载目录或退出后 `docker cp` 收集；采集完成后再清理容器。
-- 任务创建的镜像标签、容器、网络使用唯一 job 标签；仅清理自己创建的资源，不运行全局 `docker system prune`。
-- 取消 Docker CLI 不等于 daemon 中任务已取消；需核验对应容器/构建资源状态。不确定时报告 `CANCEL_UNCONFIRMED`，不能立即宣称全部停止。
-- 敏感信息采用引用和 Docker secret 机制，不写进 build args、命令行、镜像层或报告。镜像 push 必须是未来明确授权的独立任务，不能隐含在“Push 代码”中。
+runner 只管理自己启动的步骤进程组。daemon 管理的容器、`nohup`/`setsid` 脱离的进程、systemd 单元等**不在进程组内**；取消或超时确认进程组退出，不代表这些资源已停止。因此：
+
+- `cancelled` 的含义是“所有步骤进程组已确认退出”，不覆盖进程组外资源；不能据此宣称容器已停止。
+- 每个步骤获得 `CODESPACE_MCP_JOB_ID`。任务创建外部资源时用它打标签（如 `docker run --label codespace-mcp.job=$CODESPACE_MCP_JOB_ID`），并在 `cleanup` 步骤中按标签清理；cleanup 在成功、失败、超时和取消后都运行，失败单独报告为 `CLEANUP_FAILED`。
+- 只清理本任务标签的资源，不运行全局 `docker system prune` 之类的命令。
+- 容器内报告通过挂载源码目录下的报告目录或 `docker cp` 取出，再由通用产物规则收集；不设 `reportDirectory` 等 Docker 专用字段。
+- 运行刚构建的镜像时使用 image ID 或带 job 标识的标签（如 `--iidfile`），不使用可被其他任务覆盖的 `latest`。
+- 镜像 digest、Buildx metadata 等如需记录，由步骤写入文件并作为产物收集；没有推送过镜像时不能伪造 registry digest。[S8]
+- 多架构/QEMU 不自动安装或假定可用。敏感信息使用引用和 Docker secret 等机制，不写进命令行、镜像层或报告；镜像 push 必须是另行明确授权的任务。
+
+Docker 场景在验收中作为“通用 worker 能否正确运行真实工具链”的用例保留（A08、A12），不形成独立功能模块。
 
 ## 8. MCP 工具契约
 
@@ -468,19 +469,22 @@ submodule 和 Git LFS 必须作为明确配置处理：需要时初始化/拉取
       "artifacts": [{ "path": "reports", "required": false }]
     },
     "docker-verify": {
-      "requires": ["docker", "buildx"],
+      "requires": ["docker"],
       "timeoutSeconds": 3600,
       "steps": [
-        { "id": "build", "role": "build", "kind": "docker.build", "dockerfile": "Dockerfile", "context": ".", "target": "test" },
-        { "id": "test", "role": "test", "kind": "docker.run", "imageFrom": "build", "entrypoint": "python", "argv": ["-m", "pytest", "--junitxml=/reports/junit.xml"], "reportDirectory": "/reports" }
+        { "id": "build", "role": "build", "kind": "command", "argv": ["docker", "build", "--target", "test", "--iidfile", ".image-id", "."], "cwd": "." },
+        { "id": "test", "role": "test", "kind": "shell", "shell": "sh", "cwd": ".",
+          "script": "mkdir -p reports && docker run --label codespace-mcp.job=$CODESPACE_MCP_JOB_ID -v \"$PWD/reports:/reports\" \"$(cat .image-id)\" python -m pytest --junitxml=/reports/junit.xml" },
+        { "id": "remove-containers", "role": "cleanup", "kind": "shell", "shell": "sh",
+          "script": "docker ps -aq --filter label=codespace-mcp.job=$CODESPACE_MCP_JOB_ID | xargs -r docker rm -f" }
       ],
-      "artifacts": [{ "fromStep": "test", "path": "junit.xml", "required": true }]
+      "artifacts": [{ "path": "reports/junit.xml", "required": true }]
     }
   }
 }
 ```
 
-示例说明：两个任务仅用于展示 schema，不假设实际仓库同时是 Node 和 Python 项目。`docker-verify` 需要 Dockerfile 中真实存在 `test` target 和 pytest；不得自动替用户创造验证标准。
+示例说明：两个任务仅用于展示 schema，不假设实际仓库同时是 Node 和 Python 项目。`docker-verify` 只是用户命名的任务，全部由通用 command/shell/cleanup 步骤组成；它需要 Dockerfile 中真实存在 `test` target 和 pytest，不得自动替用户创造验证标准。`requires` 仅是给宿主的提示，MCP 不据此探测或安装工具。
 
 `path` 默认相对于任务源码目录；存在 `fromStep` 时，相对于该步骤导出的产物目录。下载 manifest 中统一转为 opaque artifactId，不暴露任意路径读取权限。
 
@@ -576,7 +580,7 @@ accepted/preparing/queued/running → cancel_requested → cancelled
 - queued 阶段不消耗实际执行期限，但有独立排队期限；running 后同时执行 job 总期限和 step 期限。service 在 ready 后仍受 job 总期限约束，不可因健康检查成功而无限运行。
 - 普通命令创建独立进程组，取消先 TERM，超时后 KILL，并验证退出；PID 要与 generation、启动信息一起校验，避免 PID 重用导致误杀。
 - service 必须登记进程组和就绪状态。任务失败、超时和取消时都执行 finally 清理。
-- Docker 资源按 job 标签跟踪；无法确认远端进程/资源已退出时保留取消请求状态和错误，不报告取消成功。
+- 无法确认步骤进程组已退出时保留取消请求状态并返回 `CANCEL_UNCONFIRMED`，不报告取消成功。进程组外资源（容器等）不由取消逻辑推断，按 §7.3 用 job 标签和 cleanup 步骤处理。
 - MCP 重启后按本地 job locator 和远端 manifest 恢复；丢失本地 locator 时，可通过项目绑定和 jobId 查询远端。
 - Codespace generation 变化后，旧进程句柄全部失效；原非终态任务经对账后标记 interrupted，不能对旧 PID 发信号。
 
@@ -663,11 +667,11 @@ accepted/preparing/queued/running → cancel_requested → cancelled
 | A05 | 本地 SHA S 已推送，远端分支继续前进 | 实际检出并报告 S；不可达时明确失败 |
 | A06 | 同项目已有用户文件或另一个运行中的任务 | 不覆盖用户文件；排队或返回具体冲突 |
 | A07 | 无 Docker 的 Codespace 运行普通脚本 | 成功执行，不探测/安装 Docker |
-| A08 | Docker build 成功，容器测试失败 | build PASS、tests FAIL、verification FAIL，报告可取回 |
+| A08 | 通用步骤调用真实工具链（如 docker build 成功、容器内测试失败） | build PASS、tests FAIL、verification FAIL，报告经通用产物取回；MCP 中没有该工具的专用代码 |
 | A09 | 只有构建，没有验证检查 | 不报告“测试通过”；verification NOT_CONFIGURED |
 | A10 | 任务运行期间关闭 MCP/断开 SSH，再重连 | 远端任务继续；原 jobId 可查询日志和结果 |
 | A11 | submit 响应丢失；同一 requestId 重发 | 最多接受一次执行；冲突 payload 被拒绝 |
-| A12 | 取消脚本及其子进程、取消容器任务 | 资源实际终止或明确返回无法确认，无假成功 |
+| A12 | 取消脚本及其子进程；取消创建了进程组外资源（如容器）的任务 | 进程组确认退出或返回 CANCEL_UNCONFIRMED；外部资源由 cleanup 步骤按 job 标签清理并单独报告，无假成功 |
 | A13 | Codespace 停止或重建，随后重连 | 原任务 interrupted；不对陈旧 PID 误杀，不自动重复任务 |
 | A14 | 大量日志、超长单行、Unicode、旧 cursor | 有界响应、游标正确、缺口/截断明确 |
 | A15 | 下载中断、摘要不匹配、路径逃逸、本地同名文件 | 拒绝或明确失败，不损坏已有文件 |
@@ -698,7 +702,7 @@ accepted/preparing/queued/running → cancel_requested → cancelled
 1. **M0：协议与传输 PoC。** stdio 握手、gh 身份检查、prepare、runner 安装与探测；验证 Windows 参数传递和 SSH 断线后 runner 存活。
 2. **M1：通用任务闭环。** 精确 SHA、隔离工作目录、command/shell、多步骤、submit/get/logs/cancel、产物上传下载；同时实现本地回收控制进程、实例租约、结果归档和自动停止，先用非 Docker 任务验收。自动停止未通过验收前不算闭环完成。
 3. **M2：项目体验。** 命名任务、配置摘要、幂等重连、临时服务与端口转发、跨平台错误信息，以及可选导出后删除策略和回收失败恢复。
-4. **M3：Docker 模板和发布准备。** 镜像构建、容器测试、资源清理、真实 Codespaces 回归、安装文档及兼容矩阵。
+4. **M3：发布准备。** 真实 Codespaces 回归（包括以通用步骤运行 Docker 等外部资源场景的 A08/A12）、安装文档及兼容矩阵。不实现 Docker 专用模板。
 
 以上是同一第一版产品的交付顺序，不把“普通命令能运行”当成完整交付。未实现的能力必须明确标记。
 
@@ -729,7 +733,7 @@ accepted/preparing/queued/running → cancel_requested → cancelled
 - **[S5]** [GitHub CLI：gh codespace ssh](https://cli.github.com/manual/gh_codespace_ssh) — SSH 接入、OpenSSH 集成、远端 sshd 前置条件。
 - **[S6]** [GitHub CLI：gh codespace cp](https://cli.github.com/manual/gh_codespace_cp) — 文件传输与 `--expand` 语义。
 - **[S7]** [GitHub：Codespace 生命周期](https://docs.github.com/en/codespaces/about-codespaces/understanding-the-codespace-lifecycle) — 停止、重建、保留与连续运行上限。
-- **[S8]** [Docker：buildx build](https://docs.docker.com/reference/cli/docker/buildx/build/) — load、日志、image ID、metadata 与 secret 参数。
+- **[S8]** [Docker：buildx build](https://docs.docker.com/reference/cli/docker/buildx/build/) — 任务步骤自行调用时的 load、image ID、metadata 与 secret 参数（§7.3 示例背景，非 MCP 内置功能）。
 - **[S9]** [GitHub：端口转发](https://docs.github.com/en/codespaces/developing-in-a-codespace/forwarding-ports-in-your-codespace) — 本地转发、端口可见性及认证。
 - **[S10]** [GitHub：Codespaces 计费](https://docs.github.com/en/billing/concepts/product-billing/github-codespaces) — 运行计算用量与实例存储用量分别计量。
 

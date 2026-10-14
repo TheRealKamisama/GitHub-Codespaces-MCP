@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- 设计 0.5：定位为通用 worker，取消 Docker 专用模板与步骤类型；Docker 构建与容器测试作为通用步骤场景验收，进程组外资源用 job 标签与 cleanup 步骤处理；明确 `cancelled` 仅确认步骤进程组。
+
 ### Added
 
 - 未发布 M1 首个切片：只读 `project_inspect`；`job_submit/get/logs/cancel` 在已推送的精确提交上异步执行 command/shell 多步骤任务，独立 worktree、进程组取消与确认、cleanup 步骤、execution/verification/cleanup 分别汇总、requestId 幂等与响应丢失对账、项目运行槽。Linux 容器集成与端到端检查通过，真实 Codespaces 仍 NOT RUN；产物与自动回收未实现。详见 docs/M1.md。
