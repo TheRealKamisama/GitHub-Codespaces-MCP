@@ -105,7 +105,7 @@ test('prepare stopped instance never connects; changed binding cannot reuse old 
 test('schemas reject unknown fields, paid policies and escaping paths', () => {
   for (const root of ['/tmp/x', '/workspaces/../x', '/workspaces/x//y', '/workspaces/x/./y', '/workspaces/x\ny', '/workspaces/']) assert.equal(bindingInput.safeParse({ ...input, remoteProjectRoot: root }).success, false);
   assert.equal(bindingInput.safeParse({ ...input, token: 'not-a-credential' }).success, false);
-  assert.equal(prepareInput.safeParse({ projectId: 'x', requestId: 'x', policy: 'start_existing' }).success, false);
+  assert.equal(prepareInput.safeParse({ projectId: 'x', requestId: 'x', policy: 'create_if_missing' }).success, false);
 });
 test('cross-instance storage lock and invalid state fail closed; Windows rename replaces atomically', async t => {
   const f = await fixture(t);

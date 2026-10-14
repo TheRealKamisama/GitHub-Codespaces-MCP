@@ -12,6 +12,8 @@
 
 本文定义产品目标、模块职责、任务生命周期和完整验收标准。当前已实现 M0 传输 PoC 与 M1 首个切片（精确提交任务），但尚未运行真实 Codespace 任务；实际可用范围以 [M0 开发说明](docs/M0.md) 和 [M1 首个切片](docs/M1.md)为准，其余内容仍是目标设计。项目采用 MIT 许可证，软件版本与协议版本分别管理。不要把下述完整接口表视为当前已注册工具。
 
+2026-10-15 实现说明：M1 第二部分实现了 §5.4 的 stop_after_export 子集（dedicated 绑定、start_existing、本地控制进程、结果归档、远端实例级租约与原子关闭、停止确认与退避），见 [docs/LIFECYCLE.md](docs/LIFECYCLE.md)；delete_after_export、实例创建与产物仍未实现。
+
 2026-10-13 实现说明：M0 采用 TypeScript/官方 MCP SDK 与 Python 标准库；仅允许已有 shared 实例的 reuse_only 探测。由于自动回收控制进程属于 M1，M0 不实现启动/创建。project_bind 暂以 projectId 直接指定本机绑定，不识别 localProjectRoot；ready 仅表示探测就绪。完整配置、项目识别、通用任务和资源管理仍按下文目标推进。
 
 ## 1. 已确认的产品目标

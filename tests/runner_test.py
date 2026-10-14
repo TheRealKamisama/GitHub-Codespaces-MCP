@@ -108,7 +108,7 @@ class LinuxIntegration(unittest.TestCase):
                        'binding': {'codespaceName': 'local-linux-fixture', 'projectId': 'test', 'expectedAccount': 'fixture', 'repository': 'fixture/repo', 'remoteProjectRoot': str(root / "中文 ' path")}}
             def call(payload=request):
                 completed = subprocess.run([sys.executable, str(ROOT / 'runner/bootstrap.py')], input=json.dumps(payload), text=True, capture_output=True, timeout=10,
-                                           env={**os.environ, 'CODESPACE_NAME': 'local-linux-fixture'})
+                                           env={**os.environ, 'CODESPACE_NAME': 'local-linux-fixture', 'CODESPACE_MCP_INSTANCE_ROOT': str(root / 'instance')})
                 self.assertEqual(completed.returncode, 0)
                 return json.loads(completed.stdout)
             self.assertTrue(call()['ok'])
@@ -197,6 +197,7 @@ class LinuxJobs(unittest.TestCase):
                         'repository': 'fixture/repo', 'remoteProjectRoot': str(self.root / 'project 中文')}
         self.request = {'protocolVersion': 1, 'source': base64.b64encode(source).decode(), 'build': build, 'binding': self.binding}
         self.env = {**os.environ, 'CODESPACE_NAME': 'local-linux-fixture', 'GH_TOKEN': 'must-not-reach-steps',
+                    'CODESPACE_MCP_INSTANCE_ROOT': str(self.root / 'instance'),
                     'GIT_CONFIG_COUNT': '1', 'GIT_CONFIG_KEY_0': f'url.file://{self.root}/remote/.insteadOf',
                     'GIT_CONFIG_VALUE_0': 'https://github.com/'}
         self.counter = 0
@@ -366,6 +367,34 @@ class LinuxJobs(unittest.TestCase):
                 self.assertTrue(self.logs(job['jobId'], 65536)[1]['complete'])
         # The service demo leaves its server running at the end of the step; the runner must have ended it.
         self.assertEqual([p for p in marker_processes('18765')], [])
+
+    def test_release_fencing_blocks_new_work_only_after_an_atomic_idle_check(self):
+        close_id, hold_id = '1' * 32, '2' * 32
+        self.addCleanup(lambda: self.call('instance_reopen', closeId=close_id))
+        self.addCleanup(lambda: self.call('hold_clear', holdId=hold_id))
+        busy = self.job([{'id': 'busy', 'role': 'build', 'argv': ['sleep', '30']}])
+        self.assertTrue(self.call('job_submit', job=busy)['ok'])
+        status = self.call('instance_status')['data']
+        self.assertIn(busy['jobId'], [j['jobId'] for j in status['activeJobs']])
+        self.assertIn(self.binding['remoteProjectRoot'], [j['projectRoot'] for j in status['activeJobs']])
+        refused = self.call('instance_close', closeId=close_id)['data']
+        self.assertFalse(refused['closed']); self.assertIsNone(refused['closing'])
+        self.call('job_cancel', jobId=busy['jobId'])
+        self.settle(busy['jobId'])
+        hold = self.call('hold_set', holdId=hold_id, holdSeconds=120)['data']
+        self.assertEqual([h['holdId'] for h in hold['holds']], [hold_id])
+        self.assertFalse(self.call('instance_close', closeId=close_id)['data']['closed'], 'a hold keeps the instance open')
+        self.call('hold_clear', holdId=hold_id)
+        closed = self.call('instance_close', closeId=close_id)['data']
+        self.assertTrue(closed['closed']); self.assertEqual(closed['closing']['closeId'], close_id)
+        fresh = self.job([{'id': 'late', 'role': 'build', 'argv': ['true']}])
+        self.assertEqual(self.call('job_submit', job=fresh)['error'], 'CODESPACE_RELEASING')
+        self.assertEqual(self.call('job_submit', job=busy)['data']['jobId'], busy['jobId'], 'reconciling an existing job still works')
+        self.assertEqual(self.call('hold_set', holdId=hold_id, holdSeconds=120)['error'], 'CODESPACE_RELEASING')
+        self.assertIsNotNone(self.call('instance_reopen', closeId='3' * 32)['data']['closing'], 'only the closer may reopen')
+        self.assertIsNone(self.call('instance_reopen', closeId=close_id)['data']['closing'])
+        self.assertTrue(self.call('job_submit', job=fresh)['ok'])
+        self.settle(fresh['jobId'])
 
     def test_lost_supervisor_is_interrupted_not_rerun(self):
         job = self.job([{'id': 'long', 'role': 'test', 'argv': ['sh', '-c', 'sleep 3003', 'm1-marker-lost']}])

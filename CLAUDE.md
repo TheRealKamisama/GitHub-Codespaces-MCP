@@ -36,6 +36,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `src/contracts.ts` | 严格输入与输出 schema，英文标识，schemaVersion=1 |
 | `src/github.ts` | gh 身份检查、只读 API、实例查询和分页 |
 | `src/application.ts` | 本机绑定、prepare 持久化/恢复、诊断编排、job 记录（先持久化再远端调用）与对账 |
+| `src/lifecycle.ts` | 本地释放控制进程（`node dist/cli.js controller`，按需启动、单实例锁）：对账、导出归档、统计租约、宽限、远端原子关闭、停止并等 GitHub 确认 Shutdown。只在本地状态锁内做短写入，从不跨网络调用持锁 |
+| `src/archive.ts` | settled 任务的本地归档（状态、日志、SHA-256 回执），任务读取优先走归档，不重启实例 |
 | `src/git.ts` | `project_inspect` 的只读本地 git 检查；GitHub remote 解析不返回凭据 |
 | `src/storage.ts` | JSON 状态、原子替换、跨进程目录锁 |
 | `src/transport/process.ts` | shell=false、argv、时间/输出限制、Windows 进程树清理 |
@@ -124,6 +126,7 @@ python tests/runner_test.py
 ## 必须保留的约束
 
 - 仅 GitHub Codespaces；不扩展通用 SSH、其他云或本地容器后端。
+- 只有 dedicated 绑定能被本工具启动或停止；shared 实例从不启动/停止。停止只在 GitHub 确认 Shutdown 后报告，存储始终 RETAINED。
 - 保持通用：不为 Docker 或任何工具链添加专用步骤类型、字段或分支；进程组外资源用 `CODESPACE_MCP_JOB_ID` 标签 + cleanup 步骤处理。
 - 本地 Commit/Push 属宿主职责；MCP 消费已推送的完整 SHA，并在执行前验证实际 HEAD 与请求一致，不隐式 pull/merge 或改测最新分支。
 - 长任务独立于 MCP/SSH 连接；幂等接受、状态查询、观测失败、任务失败和取消确认分别处理。

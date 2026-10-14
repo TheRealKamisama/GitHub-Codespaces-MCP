@@ -22,6 +22,7 @@
 - [Claude 交接 Summary](CLAUDE.md)：当前实现、历史验证证据、未完成项、接手顺序与授权边界。
 
 - [M0 开发 PoC / Development PoC](docs/M0.md)：传输、绑定、prepare、源码构建、恢复边界和检查结果。
+- [使用后自动停止 / Automatic Release](docs/LIFECYCLE.md)：shared 与 dedicated 绑定、start_existing、本地控制进程、结果归档、实例级租约与 codespace_release。
 - [示例场景 / Demo Scenarios](docs/SCENARIOS.md)：Python、临时服务、仓库分析、环境探测、超时、失败报告、Docker、Postgres、Node、Gradle、Rust 等任务示例及各自的验证程度。
 - [M1 首个切片 / Exact-Revision Jobs](docs/M1.md)：project_inspect 与精确提交任务的行为、幂等恢复、远端布局和检查结果。
 - [快速入门 / Quick Start](docs/QUICKSTART.md)：中英文准备步骤与待实现的完整任务流程，当前无可安装发行版。

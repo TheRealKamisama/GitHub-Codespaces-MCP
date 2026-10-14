@@ -11,8 +11,11 @@ import sys
 import tempfile
 
 
-ACTIONS = ('handshake', 'diagnostic_start', 'diagnostic_get', 'job_submit', 'job_get', 'job_cancel', 'job_logs')
-FORWARDED = ('probeId', 'job', 'jobId', 'cursor', 'maxBytes', 'waitSeconds')
+ACTIONS = ('handshake', 'diagnostic_start', 'diagnostic_get', 'job_submit', 'job_get', 'job_cancel', 'job_logs',
+           'instance_status', 'instance_close', 'instance_reopen', 'hold_set', 'hold_clear')
+FORWARDED = ('probeId', 'job', 'jobId', 'cursor', 'maxBytes', 'waitSeconds', 'closeId', 'holdId', 'holdSeconds')
+# One registry per Codespace, outside every project root, so release decisions see all projects and clients.
+INSTANCE_ROOT = '/workspaces/.codespace-mcp-instance'
 
 
 PLATFORM_ENV = '/workspaces/.codespaces/shared/.env'
@@ -121,8 +124,15 @@ def main():
             require(json.loads(metadata.read_text()) == build, 'RUNNER_INCOMPATIBLE')
         else:
             atomic(metadata, json.dumps(build).encode())
+    # Override only isolates test suites (which may themselves run as jobs) from the real instance registry.
+    instance_root = safe_path(os.environ.get('CODESPACE_MCP_INSTANCE_ROOT', INSTANCE_ROOT))
+    (instance_root / 'projects').mkdir(parents=True, exist_ok=True)
+    registration = instance_root / 'projects' / (hashlib.sha256(str(root).encode()).hexdigest() + '.json')
+    require(not registration.is_symlink(), 'PATH_INVALID')
+    if not registration.exists():
+        atomic(registration, json.dumps({'projectRoot': str(root)}).encode())
     forwarded = {key: request[key] for key in FORWARDED if key in request}
-    payload = {**forwarded, 'protocolVersion': 1, 'action': request['action'], 'root': str(managed),
+    payload = {**forwarded, 'protocolVersion': 1, 'action': request['action'], 'root': str(managed), 'instanceRoot': str(instance_root),
                'binding': {'projectId': binding['projectId'], 'repository': binding['repository']}}
     wait = request.get('waitSeconds', 0)
     require(isinstance(wait, int) and 0 <= wait <= 20, 'STATE_INVALID')

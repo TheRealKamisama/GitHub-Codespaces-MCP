@@ -8,7 +8,13 @@ export const bindingInput = z.strictObject({
   repository: z.string().max(200).regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
   codespaceName: z.string().max(100).regex(/^[a-z0-9][a-z0-9-]*$/),
   remoteProjectRoot: remoteRoot, githubHost: z.literal('github.com'),
-  ownership: z.literal('shared'), preparePolicy: z.literal('reuse_only'),
+  // dedicated: this tool may start the instance and must stop it after use; shared: never started or stopped here.
+  ownership: z.enum(['shared', 'dedicated']), preparePolicy: z.enum(['reuse_only', 'start_existing']),
+  resourcePolicy: z.strictObject({
+    releaseMode: z.enum(['none', 'stop_after_export']),
+    graceSeconds: z.number().int().min(0).max(3600).default(60),
+    exportTimeoutSeconds: z.number().int().min(30).max(3600).default(300),
+  }).optional(),
   expectedVersion: z.number().int().nonnegative().default(0), locale,
 });
 export const bindingSchema = bindingInput.omit({ expectedVersion: true }).extend({ schemaVersion: z.literal(1), version: z.number().int().positive() });
@@ -17,16 +23,17 @@ export const handshakeSchema = z.strictObject({
   protocolVersion: z.literal(1), runnerSha256: z.string().regex(/^[a-f0-9]{64}$/),
   version: z.string(), gitSha: z.string().regex(/^[a-f0-9]{40}$/), dirty: z.boolean(),
   codespaceName: z.string(), generation: z.string().min(1), pythonVersion: z.string(),
-  platform: z.literal('linux'), capabilities: z.array(z.enum(['handshake', 'bounded_diagnostic', 'revision_jobs'])),
+  platform: z.literal('linux'), capabilities: z.array(z.enum(['handshake', 'bounded_diagnostic', 'revision_jobs', 'instance_lifecycle'])),
 });
 export const diagnosticSchema = z.strictObject({
   probeId: z.string().regex(/^[a-f0-9]{64}$/), state: z.enum(['accepted', 'running', 'completed', 'interrupted', 'unknown']),
   generation: z.string(), startedAt: z.number(), updatedAt: z.number(),
 });
-export const prepareInput = z.strictObject({ projectId, requestId, operationId: z.string().regex(/^[a-f0-9]{64}$/).optional(), policy: z.literal('reuse_only').default('reuse_only'), locale });
+// policy defaults to the binding's preparePolicy and may never exceed it.
+export const prepareInput = z.strictObject({ projectId, requestId, operationId: z.string().regex(/^[a-f0-9]{64}$/).optional(), policy: z.enum(['reuse_only', 'start_existing']).optional(), locale });
 export const operationSchema = z.strictObject({
   schemaVersion: z.literal(1), operationId: z.string(), digest: z.string(), projectId: z.string(),
-  state: z.enum(['probing', 'ready', 'failed', 'unknown']), observation: z.enum(['reachable', 'unknown']),
+  state: z.enum(['starting', 'probing', 'ready', 'failed', 'unknown']), observation: z.enum(['reachable', 'unknown']),
   errorCode: z.string().nullable(), handshake: handshakeSchema.nullable(), updatedAt: z.string(),
 });
 export type Operation = z.infer<typeof operationSchema>;
@@ -105,4 +112,36 @@ export const inspectSchema = z.strictObject({
   binding: z.strictObject({ projectId: z.string(), repository: z.string(), matches: z.boolean() }).nullable(),
   suggestedSource: z.strictObject({ mode: z.literal('revision'), ref: z.string(), commit: z.string() }).nullable(),
   warnings: z.array(z.enum(['DETACHED_HEAD', 'NO_UPSTREAM', 'NOT_PUSHED', 'PUSH_STATUS_UNKNOWN', 'WORKTREE_DIRTY', 'NOT_GITHUB_REMOTE', 'REPOSITORY_MISMATCH', 'NO_COMMITS'])),
+});
+
+// Instance lifecycle (M1 slice 2). One release record per Codespace, written by the local controller.
+export const instanceStatusSchema = z.strictObject({
+  generation: z.string(), closed: z.boolean(),
+  activeJobs: z.array(z.strictObject({ projectRoot: z.string(), jobId: hex64, state: z.string() })),
+  holds: z.array(z.strictObject({ holdId: z.string().regex(/^[a-f0-9]{32}$/), expiresAt: z.number() })),
+  closing: z.strictObject({ closeId: z.string(), generation: z.string(), createdAt: z.number(), expiresAt: z.number() }).nullable(),
+});
+export type InstanceStatus = z.infer<typeof instanceStatusSchema>;
+export const releaseRecordSchema = z.strictObject({
+  schemaVersion: z.literal(1), codespaceName: z.string(), releaseId: z.string().nullable(),
+  requestedPolicy: z.enum(['none', 'stop_after_export']),
+  state: z.enum(['idle', 'waiting_for_leases', 'grace', 'stopping', 'stopped', 'blocked', 'retry_pending', 'action_required']),
+  blockers: z.array(z.strictObject({ kind: z.enum(['JOB_ACTIVE', 'HOLD', 'SUBMISSION_UNCONFIRMED', 'PREPARE_LEASE', 'EXPORT_RUNNING', 'SHARED_BINDING']), detail: z.string() })),
+  requested: z.boolean(), graceStartedAt: z.number().nullable(), closeId: z.string().nullable(),
+  stopRequestedAt: z.number().nullable(), attempts: z.number().int().nonnegative(), nextAttemptAt: z.number().nullable(),
+  errorCode: z.string().nullable(), lastGithubState: z.string().nullable(),
+  computeRelease: z.enum(['NOT_RELEASED', 'RELEASED', 'UNKNOWN']), storageRelease: z.literal('RETAINED'),
+  exportStatus: z.enum(['NONE', 'COMPLETE', 'PENDING']), updatedAt: z.number(),
+});
+export type ReleaseRecord = z.infer<typeof releaseRecordSchema>;
+export const releaseInput = z.strictObject({
+  projectId, action: z.enum(['status', 'request', 'hold', 'unhold']),
+  holdSeconds: z.number().int().min(60).max(14400).optional(), holdId: z.string().regex(/^[a-f0-9]{32}$/).optional(), locale,
+});
+export const releaseOutputSchema = z.strictObject({
+  release: releaseRecordSchema, hold: z.strictObject({ holdId: z.string(), expiresAt: z.number() }).nullable(),
+});
+export const archiveReceiptSchema = z.strictObject({
+  schemaVersion: z.literal(1), jobId: hex64, digest: hex64, statusSha256: hex64, logSha256: hex64,
+  logBytes: z.number().int().nonnegative(), remoteLogBytes: z.number().int().nonnegative(), truncated: z.boolean(), archivedAt: z.string(),
 });

@@ -15,6 +15,7 @@
 
 ### Added
 
+- M1 第二部分：dedicated 绑定与 start_existing；本地释放控制进程按需启动，导出 settled 任务到本地归档（状态、日志、SHA-256 回执），统计远端实例级租约与本地未确认提交、hold、prepare 租约，宽限后原子关闭远端入口并停止实例，GitHub 确认 Shutdown 后才报告释放；新增 codespace_release（status/request/hold/unhold）；已归档任务离线读取。详见 docs/LIFECYCLE.md。
 - 首轮真实 Codespaces 验证（2026-10-14）：在本仓库创建实例并通过真实 MCP stdio 服务验证 prepare、跨会话存活、私有仓库 fetch、精确 SHA、本项目 CI、示例、Docker/Postgres、取消、排队与停止重启后的 interrupted；详见 docs/M1.md。
 - 示例场景（docs/SCENARIOS.md、examples/jobs/）：11 个仅使用通用步骤的 job 计划；6 个在 Linux 容器中实际运行并核对声明结果，Docker/Postgres/Node/Gradle/Rust 示例仅 schema 校验。runner 日志对被信号结束的步骤记录信号名。
 - 未发布 M1 首个切片：只读 `project_inspect`；`job_submit/get/logs/cancel` 在已推送的精确提交上异步执行 command/shell 多步骤任务，独立 worktree、进程组取消与确认、cleanup 步骤、execution/verification/cleanup 分别汇总、requestId 幂等与响应丢失对账、项目运行槽。Linux 容器集成与端到端检查通过，真实 Codespaces 仍 NOT RUN；产物与自动回收未实现。详见 docs/M1.md。

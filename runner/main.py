@@ -22,6 +22,10 @@ TERM_GRACE_SECONDS = 5
 CLEANUP_DEFAULT_SECONDS = 300
 GIT_TIMEOUT_SECONDS = 600
 HEX64 = re.compile('[a-f0-9]{64}')
+HEX32 = re.compile('[a-f0-9]{32}')
+CLOSE_TTL_SECONDS = 600
+MAX_HOLD_SECONDS = 14400
+LOG_PAGE_LIMIT = 1048576
 
 
 def generation():
@@ -183,6 +187,102 @@ def validate_job(job, binding):
         require_value(isinstance(step.get('optional', False), bool))
 
 
+class Instance:
+    """Instance-wide usage registry shared by every project and client on this Codespace.
+
+    Submitting a new job and closing the instance for release both run under one instance lock, so an idle check
+    can never be followed by a newly accepted job. A closing marker is void after a restart (new generation) or
+    after CLOSE_TTL_SECONDS, which lets work resume if the stop request never takes effect.
+    """
+
+    def __init__(self, root):
+        self.root = Path(root)
+        for path in (self.root, self.root / 'projects', self.root / 'holds'):
+            if path.is_symlink():
+                raise ValueError('PATH_INVALID')
+            path.mkdir(exist_ok=True)
+
+    def locked(self):
+        import fcntl
+        lock = open_lock(self.root / '.lock')
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return lock
+
+    def closing(self):
+        path = self.root / 'closing.json'
+        if not path.exists():
+            return None
+        marker = read_json(path)
+        if marker.get('generation') != generation() or marker.get('expiresAt', 0) <= time.time():
+            return None
+        return marker
+
+    def require_open(self):
+        if self.closing() is not None:
+            raise ValueError('CODESPACE_RELEASING')
+
+    def holds(self):
+        current, now, result = generation(), time.time(), []
+        for path in sorted((self.root / 'holds').glob('*.json')):
+            hold = read_json(path)
+            if hold.get('generation') == current and hold.get('expiresAt', 0) > now:
+                result.append({'holdId': hold['holdId'], 'expiresAt': hold['expiresAt']})
+        return result
+
+    def active_jobs(self):
+        active = []
+        for entry in sorted((self.root / 'projects').glob('*.json')):
+            project = Path(read_json(entry)['projectRoot'])
+            jobs_dir = project / '.codespace-mcp' / 'jobs'
+            if not jobs_dir.is_dir() or jobs_dir.is_symlink():
+                continue
+            store = Jobs(project / '.codespace-mcp')
+            for directory in sorted(p for p in jobs_dir.iterdir() if p.is_dir() and HEX64.fullmatch(p.name)):
+                if (directory / 'status.json').exists():
+                    status = store.present(directory)
+                    if not status['settled']:
+                        active.append({'projectRoot': str(project), 'jobId': status['jobId'], 'state': status['state']})
+        return active
+
+    def status(self):
+        return {'generation': generation(), 'activeJobs': self.active_jobs(), 'holds': self.holds(), 'closing': self.closing()}
+
+    def close(self, close_id):
+        if not HEX32.fullmatch(str(close_id)):
+            raise ValueError('STATE_INVALID')
+        with self.locked():
+            status = self.status()
+            if status['activeJobs'] or status['holds']:
+                return {**status, 'closed': False}
+            now = time.time()
+            atomic(self.root / 'closing.json', {'closeId': close_id, 'generation': status['generation'], 'createdAt': now, 'expiresAt': now + CLOSE_TTL_SECONDS})
+            return {**self.status(), 'closed': True}
+
+    def reopen(self, close_id):
+        with self.locked():
+            marker = self.closing()
+            if marker is not None and marker['closeId'] == close_id:
+                (self.root / 'closing.json').unlink()
+            return {**self.status(), 'closed': False}
+
+    def hold(self, hold_id, seconds):
+        if not HEX32.fullmatch(str(hold_id)) or not isinstance(seconds, int) or not 60 <= seconds <= MAX_HOLD_SECONDS:
+            raise ValueError('STATE_INVALID')
+        with self.locked():
+            self.require_open()
+            atomic(self.root / 'holds' / f'{hold_id}.json', {'holdId': hold_id, 'generation': generation(), 'expiresAt': time.time() + seconds})
+            return {**self.status(), 'closed': False}
+
+    def unhold(self, hold_id):
+        if not HEX32.fullmatch(str(hold_id)):
+            raise ValueError('STATE_INVALID')
+        with self.locked():
+            path = self.root / 'holds' / f'{hold_id}.json'
+            if path.exists():
+                path.unlink()
+            return {**self.status(), 'closed': False}
+
+
 class Jobs:
     """Remote job store. status.json has a single writer: the job's supervisor (after the accepted record)."""
 
@@ -236,16 +336,18 @@ class Jobs:
                 'endedAt': status['endedAt'], 'updatedAt': status['updatedAt'], 'source': status['source'], 'steps': steps,
                 'summary': summary}
 
-    def submit(self, job, binding):
+    def submit(self, job, binding, instance):
         validate_job(job, binding)
         import fcntl
-        with open_lock(self.jobs / '.lock') as lock:
+        # Lock order: instance, then project jobs. The instance lock makes "not closing" and "job accepted" atomic.
+        with instance.locked(), open_lock(self.jobs / '.lock') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             directory = self.directory(job['jobId'])
             if directory.exists():
                 if read_json(directory / 'request.json')['digest'] != job['digest']:
                     raise ValueError('IDEMPOTENCY_CONFLICT')
                 return self.present(directory)
+            instance.require_open()
             directory.mkdir(mode=0o700)
             atomic(directory / 'request.json', job)
             now = time.time()
@@ -290,7 +392,7 @@ class Jobs:
         if not (directory / 'status.json').exists():
             raise ValueError('JOB_NOT_FOUND')
         match = re.fullmatch('v1:([0-9]{1,15})', cursor or 'v1:0')
-        if not match or not isinstance(max_bytes, int) or not 1 <= max_bytes <= 262144:
+        if not match or not isinstance(max_bytes, int) or not 1 <= max_bytes <= LOG_PAGE_LIMIT:
             raise ValueError('CURSOR_INVALID')
         offset = int(match.group(1))
         path = directory / 'job.log'
@@ -588,13 +690,24 @@ def main(request):
                 'version': build['version'], 'gitSha': build['gitSha'], 'dirty': build['dirty'],
                 'codespaceName': os.environ.get('CODESPACE_NAME', ''), 'generation': generation(),
                 'pythonVersion': platform.python_version(), 'platform': sys.platform,
-                'capabilities': ['handshake', 'bounded_diagnostic', 'revision_jobs']}
+                'capabilities': ['handshake', 'bounded_diagnostic', 'revision_jobs', 'instance_lifecycle']}
+    if action in ('instance_status', 'instance_close', 'instance_reopen', 'hold_set', 'hold_clear'):
+        instance = Instance(request['instanceRoot'])
+        if action == 'instance_status':
+            return {**instance.status(), 'closed': False}
+        if action == 'instance_close':
+            return instance.close(request.get('closeId'))
+        if action == 'instance_reopen':
+            return instance.reopen(request.get('closeId'))
+        if action == 'hold_set':
+            return instance.hold(request.get('holdId'), request.get('holdSeconds'))
+        return instance.unhold(request.get('holdId'))
     if action in ('job_submit', 'job_get', 'job_cancel', 'job_logs'):
         if shutil.which('git') is None:
             raise ValueError('CAPABILITY_MISSING')
         jobs = Jobs(request['root'])
         if action == 'job_submit':
-            return jobs.submit(request.get('job'), request.get('binding') or {})
+            return jobs.submit(request.get('job'), request.get('binding') or {}, Instance(request['instanceRoot']))
         if action == 'job_get':
             return jobs.get(request.get('jobId'), request.get('waitSeconds', 0))
         if action == 'job_cancel':
@@ -646,5 +759,6 @@ if __name__ == '__main__':
             print(json.dumps({'ok': True, 'data': result, 'error': None}))
         except Exception as error:
             known = {'PLATFORM_UNSUPPORTED', 'RUNNER_INCOMPATIBLE', 'STATE_INVALID', 'PATH_INVALID', 'PROBE_NOT_FOUND',
-                     'CAPABILITY_MISSING', 'CONFIG_INVALID', 'REPOSITORY_MISMATCH', 'IDEMPOTENCY_CONFLICT', 'JOB_NOT_FOUND', 'CURSOR_INVALID'}
+                     'CAPABILITY_MISSING', 'CONFIG_INVALID', 'REPOSITORY_MISMATCH', 'IDEMPOTENCY_CONFLICT', 'JOB_NOT_FOUND', 'CURSOR_INVALID',
+                     'CODESPACE_RELEASING'}
             print(json.dumps({'ok': False, 'data': None, 'error': str(error) if str(error) in known else 'RUNNER_FAILED'}))

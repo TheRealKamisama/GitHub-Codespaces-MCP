@@ -18,7 +18,7 @@ test('official SDK real stdio initialize/list/call/close/reconnect; no cloud cal
       assert.equal(client.getServerVersion().version, build.version);
       assert.deepEqual(Object.keys(client.getServerCapabilities()), ['tools']);
       const { tools } = await client.listTools();
-      assert.deepEqual(tools.map(t => t.name), ['environment_check', 'codespace_list', 'project_bind', 'codespace_prepare', 'runner_probe', 'project_inspect', 'job_submit', 'job_get', 'job_logs', 'job_cancel']);
+      assert.deepEqual(tools.map(t => t.name), ['environment_check', 'codespace_list', 'project_bind', 'codespace_prepare', 'runner_probe', 'project_inspect', 'job_submit', 'job_get', 'job_logs', 'job_cancel', 'codespace_release']);
       assert.deepEqual(tools.filter(t => t.annotations.destructiveHint).map(t => t.name), ['job_submit', 'job_cancel']);
       for (const tool of tools) { assert.equal(tool.inputSchema.additionalProperties, false); assert.equal(tool.outputSchema.type, 'object'); }
       const result = await client.callTool({ name: 'codespace_prepare', arguments: { projectId: 'x', requestId: 'x', policy: 'create_if_missing', locale: 'zh-CN' } });

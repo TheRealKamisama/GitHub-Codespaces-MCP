@@ -1,17 +1,49 @@
 import { z } from 'zod';
 import { AppError, requireThat } from './errors.js';
-import { bindingSchema, bindingInput, prepareInput, operationSchema, handshakeSchema, jobSubmitInput, jobRecordSchema, jobStatusSchema, jobGetInput, jobLogsInput, jobLogsSchema, jobRef, inspectInput, type Binding, type Operation, type JobRecord, type JobStatus } from './contracts.js';
+import { join } from 'node:path';
+import { randomBytes } from 'node:crypto';
+import { bindingSchema, bindingInput, prepareInput, operationSchema, handshakeSchema, jobSubmitInput, jobRecordSchema, jobStatusSchema, jobGetInput, jobLogsInput, jobLogsSchema, jobRef, inspectInput, releaseInput, releaseRecordSchema, instanceStatusSchema, type Binding, type Operation, type JobRecord, type JobStatus, type ReleaseRecord } from './contracts.js';
 import { Github } from './github.js';
+import { Archive } from './archive.js';
 import { LocalGit } from './git.js';
 import { Store, digest } from './storage.js';
 import type { RunnerPort } from './transport/runner.js';
 
 // Failures after which the remote may or may not have acted: reconcile with the same request, never replay with a new one.
 const AMBIGUOUS = ['TRANSPORT_UNAVAILABLE', 'PROCESS_TIMEOUT', 'PROCESS_CLEANUP_UNCONFIRMED', 'GITHUB_REQUEST_FAILED', 'OUTPUT_LIMIT', 'RUNNER_INVALID_RESPONSE', 'RUNNER_FAILED', 'INTERNAL_ERROR'];
-const codeOf = (e: unknown) => e instanceof AppError ? e.code : 'INTERNAL_ERROR';
+export const codeOf = (e: unknown) => e instanceof AppError ? e.code : 'INTERNAL_ERROR';
+// States from which an instance is on its way to Available without another start request.
+const TRANSITIONAL = ['Queued', 'Provisioning', 'Awaiting', 'Created', 'Starting', 'Updating', 'Rebuilding', 'ShuttingDown'];
+
+// Bindings stored before resource policies existed are shared and never released by this tool.
+export function releasePolicy(b: Binding) {
+  return b.resourcePolicy ?? { releaseMode: b.ownership === 'dedicated' ? 'stop_after_export' as const : 'none' as const, graceSeconds: 60, exportTimeoutSeconds: 300 };
+}
+export function newReleaseRecord(codespaceName: string, requestedPolicy: ReleaseRecord['requestedPolicy']): ReleaseRecord {
+  return { schemaVersion: 1, codespaceName, releaseId: null, requestedPolicy, state: 'idle', blockers: [], requested: false, graceStartedAt: null, closeId: null,
+    stopRequestedAt: null, attempts: 0, nextAttemptAt: null, errorCode: null, lastGithubState: null, computeRelease: 'NOT_RELEASED', storageRelease: 'RETAINED',
+    exportStatus: 'NONE', updatedAt: Date.now() };
+}
+
+export interface ApplicationOptions {
+  archive?: Archive;
+  // Starts the local release controller; a no-op unless wired by the CLI.
+  wake?: () => void;
+  sleep?: (ms: number) => Promise<void>;
+  startWaitMs?: number;
+}
 
 export class Application {
-  constructor(readonly store: Store, readonly gh: Github, readonly runner: RunnerPort, readonly git = new LocalGit()) {}
+  readonly archive: Archive;
+  readonly wake: () => void;
+  private sleep: (ms: number) => Promise<void>;
+  private startWaitMs: number;
+  constructor(readonly store: Store, readonly gh: Github, readonly runner: RunnerPort, readonly git = new LocalGit(), options: ApplicationOptions = {}) {
+    this.archive = options.archive ?? new Archive(join(store.root, 'archive'));
+    this.wake = options.wake ?? (() => {});
+    this.sleep = options.sleep ?? (ms => new Promise(r => setTimeout(r, ms)));
+    this.startWaitMs = options.startWaitMs ?? 20000;
+  }
   async binding(id: string): Promise<Binding> {
     const raw = await this.store.read('binding', id);
     requireThat(raw !== undefined, 'PROJECT_NOT_BOUND');
@@ -28,16 +60,30 @@ export class Application {
       const current = old === undefined ? undefined : bindingSchema.parse(old);
       requireThat(input.expectedVersion === (current?.version ?? 0), 'BINDING_VERSION_CONFLICT');
       const { expectedVersion, ...fields } = input;
-      const binding = bindingSchema.parse({ ...fields, version: expectedVersion + 1, schemaVersion: 1 });
-      await this.store.write('binding', input.projectId, binding); return binding;
+      // Only a dedicated binding may start an instance, and it must then be released after use.
+      const dedicated = fields.ownership === 'dedicated';
+      const releaseMode = fields.resourcePolicy?.releaseMode ?? (dedicated ? 'stop_after_export' : 'none');
+      requireThat(dedicated ? releaseMode === 'stop_after_export' : releaseMode === 'none' && fields.preparePolicy === 'reuse_only', 'CONFIG_INVALID');
+      // Ownership is per instance: two projects must not disagree about whether this tool may stop it.
+      for (const other of await this.store.list('binding')) {
+        const b = bindingSchema.safeParse(other); requireThat(b.success, 'STATE_INVALID');
+        if (b.data.projectId !== fields.projectId && b.data.codespaceName === fields.codespaceName) requireThat(b.data.ownership === fields.ownership, 'CONFIG_INVALID');
+      }
+      const binding = bindingSchema.parse({ ...fields, resourcePolicy: { ...fields.resourcePolicy, releaseMode }, version: expectedVersion + 1, schemaVersion: 1 });
+      await this.store.write('binding', input.projectId, binding);
+      if (dedicated) this.wake();
+      return binding;
     });
   }
-  async available(binding: Binding) {
+  async checked(binding: Binding) {
     await this.gh.identity(binding.expectedAccount);
     const cs = await this.gh.get(binding.codespaceName);
     requireThat(cs.repository.full_name.toLowerCase() === binding.repository.toLowerCase(), 'REPOSITORY_MISMATCH');
     requireThat(cs.owner.login.toLowerCase() === binding.expectedAccount.toLowerCase(), 'AUTH_IDENTITY_MISMATCH');
-    requireThat(cs.state === 'Available', 'CODESPACE_NOT_READY');
+    return cs;
+  }
+  async available(binding: Binding) {
+    requireThat((await this.checked(binding)).state === 'Available', 'CODESPACE_NOT_READY');
   }
   async prepare(raw: z.input<typeof prepareInput>) {
     const input = prepareInput.parse(raw);
@@ -45,15 +91,29 @@ export class Application {
       const binding = await this.binding(input.projectId);
       const operationId = digest([input.projectId, input.requestId]);
       requireThat(!input.operationId || input.operationId === operationId, 'OPERATION_MISMATCH');
+      const policy = input.policy ?? binding.preparePolicy;
+      requireThat(policy === 'reuse_only' || binding.preparePolicy === 'start_existing', 'POLICY_NOT_ALLOWED');
       const { locale: ignoredLocale, ...executionBinding } = binding;
-      const planDigest = digest([executionBinding, input.policy]);
+      const planDigest = digest([executionBinding, policy]);
       const stored = await this.store.read('prepare', operationId);
       const old = stored === undefined ? undefined : operationSchema.parse(stored);
       requireThat(!old || old.digest === planDigest, 'IDEMPOTENCY_CONFLICT');
       const operation: Operation = { schemaVersion: 1, operationId, digest: planDigest, projectId: input.projectId, state: 'probing', observation: 'unknown', errorCode: null, handshake: null, updatedAt: new Date().toISOString() };
       await this.store.write('prepare', operationId, operation);
       try {
-        await this.available(binding);
+        let cs = await this.checked(binding);
+        if (cs.state !== 'Available' && policy === 'start_existing') {
+          if (cs.state === 'Shutdown') await this.gh.start(binding.codespaceName);
+          else requireThat(TRANSITIONAL.includes(cs.state), 'CODESPACE_NOT_READY');
+          // Bounded wait inside one call; callers resume the same requestId while the instance is still starting.
+          const deadline = Date.now() + this.startWaitMs;
+          while (cs.state !== 'Available' && Date.now() < deadline) { await this.sleep(3000); cs = await this.gh.get(binding.codespaceName); }
+          if (cs.state !== 'Available') {
+            operation.state = 'starting'; operation.updatedAt = new Date().toISOString();
+            await this.store.write('prepare', operationId, operation); this.wake(); return operation;
+          }
+        }
+        requireThat(cs.state === 'Available', 'CODESPACE_NOT_READY');
         operation.handshake = handshakeSchema.parse(await this.runner.call(binding, 'handshake'));
         operation.state = 'ready'; operation.observation = 'reachable';
       } catch (e) {
@@ -62,7 +122,9 @@ export class Application {
         operation.errorCode = code;
       }
       operation.updatedAt = new Date().toISOString();
-      await this.store.write('prepare', operationId, operation); return operation;
+      await this.store.write('prepare', operationId, operation);
+      if (binding.ownership === 'dedicated') this.wake();
+      return operation;
     });
   }
   async probe(project: string, request: string, action: 'start' | 'status') {
@@ -128,7 +190,9 @@ export class Application {
         else if (record.submission !== 'accepted') record.submission = AMBIGUOUS.includes(codeOf(e)) ? 'unknown' : 'rejected';
         record.errorCode = codeOf(e);
       }
-      await this.store.write('job', jobId, record); return record;
+      await this.store.write('job', jobId, record);
+      if (binding.ownership === 'dedicated') this.wake();
+      return record;
     });
   }
   private async jobBinding(projectId: string, jobId: string) {
@@ -151,8 +215,16 @@ export class Application {
       });
     } catch (e) { if (codeOf(e) !== 'STATE_BUSY') throw e; }
   }
+  // A settled job archived locally is final: read it without contacting (or restarting) the Codespace.
+  private async archived(projectId: string, jobId: string) {
+    const archived = await this.archive.read(jobId);
+    if (archived) requireThat(archived.status.projectId === projectId, 'JOB_NOT_FOUND');
+    return archived;
+  }
   async getJob(raw: z.input<typeof jobGetInput>) {
     const input = jobGetInput.parse(raw);
+    const archived = await this.archived(input.projectId, input.jobId);
+    if (archived) return archived.status;
     const binding = await this.jobBinding(input.projectId, input.jobId);
     const status = jobStatusSchema.parse(await this.runner.call(binding, 'job_get', { jobId: input.jobId, waitSeconds: input.waitSeconds }));
     requireThat(status.projectId === input.projectId, 'JOB_NOT_FOUND');
@@ -160,6 +232,8 @@ export class Application {
   }
   async cancelJob(raw: z.input<typeof jobRef>) {
     const input = jobRef.parse(raw);
+    const archived = await this.archived(input.projectId, input.jobId);
+    if (archived) return archived.status;
     const binding = await this.jobBinding(input.projectId, input.jobId);
     const status = jobStatusSchema.parse(await this.runner.call(binding, 'job_cancel', { jobId: input.jobId }));
     requireThat(status.projectId === input.projectId, 'JOB_NOT_FOUND');
@@ -167,7 +241,44 @@ export class Application {
   }
   async jobLogs(raw: z.input<typeof jobLogsInput>) {
     const input = jobLogsInput.parse(raw);
+    const archived = await this.archived(input.projectId, input.jobId);
+    // A truncated archive still has the full log remotely; read it there while the instance is running.
+    if (archived && !archived.receipt.truncated) return this.archive.logs(input.jobId, input.cursor, input.maxBytes);
     const binding = await this.jobBinding(input.projectId, input.jobId);
     return jobLogsSchema.parse(await this.runner.call(binding, 'job_logs', { jobId: input.jobId, cursor: input.cursor, maxBytes: input.maxBytes }));
+  }
+  async releaseRecord(codespaceName: string, requestedPolicy: ReleaseRecord['requestedPolicy']) {
+    const stored = await this.store.read('release', codespaceName);
+    if (stored === undefined) return newReleaseRecord(codespaceName, requestedPolicy);
+    const r = releaseRecordSchema.safeParse(stored); requireThat(r.success, 'STATE_INVALID'); return r.data;
+  }
+  async release(raw: z.input<typeof releaseInput>) {
+    const input = releaseInput.parse(raw);
+    const binding = await this.binding(input.projectId);
+    const policy = releasePolicy(binding).releaseMode;
+    if (input.action === 'status') return { release: await this.releaseRecord(binding.codespaceName, policy), hold: null };
+    if (input.action === 'request') {
+      requireThat(binding.ownership === 'dedicated', 'BLOCKED_SHARED_USAGE');
+      const release = await this.store.locked(async () => {
+        const record = { ...await this.releaseRecord(binding.codespaceName, policy), requested: true, updatedAt: Date.now() };
+        await this.store.write('release', binding.codespaceName, record); return record;
+      });
+      this.wake();
+      return { release, hold: null };
+    }
+    // Holds keep any instance open for bounded debugging; they live remotely so every client sees them.
+    await this.available(binding);
+    if (input.action === 'hold') {
+      const holdId = randomBytes(16).toString('hex');
+      const status = instanceStatusSchema.parse(await this.runner.call(binding, 'hold_set', { holdId, holdSeconds: input.holdSeconds ?? 3600 }));
+      const hold = status.holds.find(h => h.holdId === holdId);
+      requireThat(hold, 'RUNNER_INVALID_RESPONSE');
+      this.wake();
+      return { release: await this.releaseRecord(binding.codespaceName, policy), hold };
+    }
+    requireThat(input.holdId, 'INVALID_ARGUMENT');
+    instanceStatusSchema.parse(await this.runner.call(binding, 'hold_clear', { holdId: input.holdId }));
+    this.wake();
+    return { release: await this.releaseRecord(binding.codespaceName, policy), hold: null };
   }
 }

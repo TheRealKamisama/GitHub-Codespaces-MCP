@@ -33,6 +33,13 @@ export class Github {
     return { account: login, host: 'github.com' as const, authSource: this.env.GH_TOKEN ? 'GH_TOKEN' : this.env.GITHUB_TOKEN ? 'GITHUB_TOKEN' : (active[0]!.tokenSource ?? 'stored'), ghVersion: version.stdout.split(/\r?\n/)[0] ?? 'unknown' };
   }
   api(endpoint: string) { return this.json(['api', '--hostname', 'github.com', '-H', 'X-GitHub-Api-Version: 2022-11-28', endpoint]); }
+  // Official REST lifecycle endpoints; gh has no start subcommand. Acceptance is not completion: callers poll get().
+  async post(endpoint: string) {
+    const r = await this.command(['api', '--hostname', 'github.com', '--method', 'POST', '-H', 'X-GitHub-Api-Version: 2022-11-28', endpoint]);
+    requireThat(r.exitCode === 0, 'GITHUB_REQUEST_FAILED');
+  }
+  start(name: string) { return this.post(`user/codespaces/${encodeURIComponent(name)}/start`); }
+  stop(name: string) { return this.post(`user/codespaces/${encodeURIComponent(name)}/stop`); }
   async get(name: string): Promise<Codespace> {
     const parsed = codespaceSchema.safeParse(await this.api(`user/codespaces/${encodeURIComponent(name)}`));
     requireThat(parsed.success, 'INVALID_GH_RESPONSE'); return parsed.data;
