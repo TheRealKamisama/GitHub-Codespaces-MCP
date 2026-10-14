@@ -40,6 +40,10 @@
 | [gradle-build](../examples/jobs/gradle-build.json) | 长构建与任务期限；`--no-daemon` 让进程不超出所在步骤 | Java、仓库中的 Gradle wrapper | 仅 schema 校验 |
 | [rust-cargo](../examples/jobs/rust-cargo.json) | `--locked` 使用提交中的锁文件；步骤级环境变量 | cargo | 仅 schema 校验 |
 
+## 真实 Codespace 结果（2026-10-14）
+
+在真实 Codespace 上实际运行并得到文档声明结果的示例：environment-probe、repository-report、service-integration、timeouts-and-optional-steps、failure-is-reported-honestly、node-ci（以本仓库为项目）。Docker 构建/容器测试与 Postgres 容器以同样的通用步骤模式在真实实例上通过，包括取消后 cleanup 移除容器；但 docker-build-and-test、docker-postgres-integration 示例本身需要带对应 Dockerfile / 测试的仓库，未按原样运行。gradle-build、rust-cargo、python-unittest 未在真实实例上运行。详见 [M1 真实验证](M1.md#真实-codespaces-验证2026-10-14)。
+
 ## 编写自己的任务时的要点
 
 - **进程组外的资源**：runner 只管理步骤自己的进程组。`docker run -d`、数据库容器、`nohup` 进程不在进程组内：用 `CODESPACE_MCP_JOB_ID` 打标签，并在 `cleanup` 步骤中按标签清理（见两个 Docker 示例）。`cancelled` 只确认步骤进程组已退出。

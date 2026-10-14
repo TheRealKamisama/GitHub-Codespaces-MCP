@@ -4,12 +4,18 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- 真实 Codespace 的非登录 SSH 会话缺少 CODESPACE_NAME 与 git 令牌，导致 prepare 和私有 fetch 失败；bootstrap 现从平台 .env 补充缺失变量，步骤环境同时移除 GITHUB_CODESPACE_TOKEN。
+- 中断任务的运行中步骤显示为 interrupted，未 settled 任务的汇总从步骤实时计算。
+
 ### Changed
 
 - 设计 0.5：定位为通用 worker，取消 Docker 专用模板与步骤类型；Docker 构建与容器测试作为通用步骤场景验收，进程组外资源用 job 标签与 cleanup 步骤处理；明确 `cancelled` 仅确认步骤进程组。
 
 ### Added
 
+- 首轮真实 Codespaces 验证（2026-10-14）：在本仓库创建实例并通过真实 MCP stdio 服务验证 prepare、跨会话存活、私有仓库 fetch、精确 SHA、本项目 CI、示例、Docker/Postgres、取消、排队与停止重启后的 interrupted；详见 docs/M1.md。
 - 示例场景（docs/SCENARIOS.md、examples/jobs/）：11 个仅使用通用步骤的 job 计划；6 个在 Linux 容器中实际运行并核对声明结果，Docker/Postgres/Node/Gradle/Rust 示例仅 schema 校验。runner 日志对被信号结束的步骤记录信号名。
 - 未发布 M1 首个切片：只读 `project_inspect`；`job_submit/get/logs/cancel` 在已推送的精确提交上异步执行 command/shell 多步骤任务，独立 worktree、进程组取消与确认、cleanup 步骤、execution/verification/cleanup 分别汇总、requestId 幂等与响应丢失对账、项目运行槽。Linux 容器集成与端到端检查通过，真实 Codespaces 仍 NOT RUN；产物与自动回收未实现。详见 docs/M1.md。
 - M0 首次在 Linux 客户端与 Linux 容器（可写 `/workspaces`）中通过检查；新增 `scripts/linux-container-test.sh`。

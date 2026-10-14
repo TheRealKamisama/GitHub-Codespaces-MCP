@@ -84,7 +84,7 @@ M1 首个切片新增（详见 docs/M1.md）：
 | Linux 客户端（2026-10-14） | PASS；SteamOS Node 24.21.0，类型检查/构建、21 项 Node（Linux 端到端在主机跳过）、Python portable 7 项 |
 | Linux runner 与任务集成 | PASS，容器；podman python:3.12-bookworm + tmpfs `/workspaces`，M0 安装/诊断与 M1 精确 SHA/取消/超时/排队/中断；本地 bare 仓库替代 github.com |
 | Linux 端到端 | PASS，容器；真实 Application→Runner→bootstrap→runner，仅 gh/SSH 为桩 |
-| 真实 Codespaces 安装/SSH 断线/重启/任务 fetch 凭据 | NOT RUN；未授权云端操作，本机 gh token 无 codespace scope |
+| 真实 Codespaces（2026-10-14） | PASS，部分；用户授权在本仓库创建实例 `mcp-live-test-w99669w746xc54qr`（已停止，未删除）。prepare、跨会话存活、私有 fetch、精确 SHA、本项目 CI、示例、Docker/Postgres、取消、排队、停止重启 interrupted。详见 docs/M1.md |
 | 产物、自动导出与回收 | 未实现 |
 
 ```sh
@@ -103,6 +103,8 @@ python tests/runner_test.py
 
 ## 已知问题与需要复核的边界
 
+- 真实 Codespace 上 `gh codespace ssh` 是非登录会话，没有 `CODESPACE_NAME`/git 令牌；bootstrap 从 `/workspaces/.codespaces/shared/.env` 补充缺失变量。不要改成 `bash -l`：用户 dotfiles 可能写 stdout 污染协议。
+
 - Windows 受限沙箱下 gh 曾报告认证错误，沙箱外真实认证模块验证成功；不要据此让用户反复登录或提供 token。
 - npm 默认缓存在受限环境可能 EPERM，可进程级设置仓库内 `.cache/npm`；不改全局设置。
 - Windows taskkill 可能被沙箱拒绝。实现已改为有界返回 PROCESS_CLEANUP_UNCONFIRMED；14 项最终 Node 检查在允许终止自己子进程的沙箱外运行。
@@ -115,7 +117,7 @@ python tests/runner_test.py
 ## 建议接手顺序
 
 1. 确认本地状态、origin、当前 SHA，阅读以上文档；复现适用的本地检查。先修真实发现的问题，不把完善所有技术规范作为开工前提。
-2. M0 Linux 集成已在容器中通过（2026-10-14）；仍需真实 Codespaces 传输验收。已有实例也需明确目标、可用目录及操作授权；不要从仓库推送授权推导创建/启动计费资源授权。最小真实验证步骤见 docs/M0.md。
+2. M0/M1 已在容器与真实 Codespace 上验证（2026-10-14，docs/M1.md）；未验证项：调用中途 SSH 断开/响应丢失、提交后分支前进、Windows/macOS 客户端。已有实例也需明确目标、可用目录及操作授权；不要从仓库推送授权推导创建/启动计费资源授权。最小真实验证步骤见 docs/M0.md。
 3. 推进 M1：精确 SHA、隔离源码、多步骤任务、requestId 幂等、查询/日志/取消已完成首个切片（docs/M1.md）；下一步是产物、在 Windows 上运行检查，并**同时完成本地回收控制进程、实例级租约、结果归档和自动停止**。自动回收未通过真实验收就不算任务闭环完成。
 4. 再做 M2 项目体验、服务/端口/恢复和可选删除；M3 发行准备（Docker 只作为通用步骤的验收场景）。不要为赶进度提前发布“可用预览版”。
 

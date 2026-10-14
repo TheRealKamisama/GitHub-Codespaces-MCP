@@ -2,7 +2,7 @@
 
 面向本地 AI Agent 的 GitHub Codespaces 工作区管理与通用任务执行 MCP。
 
-**状态：已有未发布的 M0 传输 PoC 与 M1 首个切片（精确提交任务），可从源码构建；没有可安装发行版，未完成真实 Codespaces 验收。**
+**状态：已有未发布的 M0 传输 PoC 与 M1 首个切片（精确提交任务），可从源码构建；没有可安装发行版。2026-10-14 已在真实 Codespace 上完成一轮验证（见 docs/M1.md），完整验收与自动回收仍未完成。**
 
 已实现 stdio MCP、gh 身份检查、已有实例的本机绑定、reuse_only prepare、固定十秒 runner 诊断，以及 M1 首个切片：只读 `project_inspect` 和在已推送精确提交上执行的异步多步骤任务（`job_submit/get/logs/cancel`）。Windows、Linux 本地、模拟与 Linux 容器检查已运行；产物、自动导出/回收、实例租约尚未实现。源码运行方式、证据与剩余边界见 [M0 开发说明](docs/M0.md) 与 [M1 首个切片](docs/M1.md)。
 
