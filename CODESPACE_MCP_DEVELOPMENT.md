@@ -695,7 +695,7 @@ accepted/preparing/queued/running → cancel_requested → cancelled
 
 测试分层：单元测试覆盖状态机、schema、路径/参数、聚合规则；契约测试用 fake gh/runner 覆盖 API 错误和响应丢失；Linux 容器集成测试验证 supervisor/取消/产物；真实 Codespaces 验收验证认证、SSH、后台存活、暂停恢复和 Docker 行为。不能用 mock 通过替代实际云端验证。
 
-当前状态：以上为完整产品验收要求。Windows stdio/参数传递及部分模拟恢复检查已运行，见 [M0 证据矩阵](docs/M0.md#检查与证据2026-10-13)；不等同于完整 A01–A28 通过。2026-10-14 起 Linux 客户端与 Linux 容器中的 runner/任务检查已运行（A05、A06 运行槽部分、A09、A11、A12 非 Docker 部分、A20 部分的容器证据，见 [M1 证据](docs/M1.md#检查与证据2026-10-14)）。2026-10-14 在真实 Codespace 上验证了 A06、A08（通用步骤运行 Docker）、A09、A11、A12（含容器与 cleanup）、A13，以及 A05、A10 的部分，见 [M1 真实验证](docs/M1.md#真实-codespaces-验证2026-10-14)。自动回收（A21–A28）、产物、macOS/Windows 客户端仍为 **NOT RUN** 或未实现。
+当前状态：以上为完整产品验收要求。Windows stdio/参数传递及部分模拟恢复检查已运行，见 [M0 证据矩阵](docs/M0.md#检查与证据2026-10-13)；不等同于完整 A01–A28 通过。2026-10-14 起 Linux 客户端与 Linux 容器中的 runner/任务检查已运行（A05、A06 运行槽部分、A09、A11、A12 非 Docker 部分、A20 部分的容器证据，见 [M1 证据](docs/M1.md#检查与证据2026-10-14)）。2026-10-14 在真实 Codespace 上验证了 A06、A08（通用步骤运行 Docker）、A09、A11、A12（含容器与 cleanup）、A13，以及 A05、A10 的部分，见 [M1 真实验证](docs/M1.md#真实-codespaces-验证2026-10-14)。2026-10-15 在真实 Codespace 上验证了 A21、A22（stop_after_export，见 [docs/LIFECYCLE.md](docs/LIFECYCLE.md)）；A23–A28 中删除、创建相关项未实现，停止失败重试仅模拟验证；产物、macOS/Windows 客户端仍为 **NOT RUN** 或未实现。
 
 ## 13. 实施顺序与待核对决策
 

@@ -55,7 +55,26 @@
 | 控制进程状态机 | PASS，模拟 | 导出→宽限→关闭→停止→GitHub 确认；hold、未确认提交、prepare 租约与 request；关闭竞争；停止失败退避与 action_required；接受但未生效的停止；导出窗口；共享实例与策略上限；start_existing；单实例锁 |
 | 远端关闭协议 | PASS，Linux 容器 | 活动任务时拒绝关闭；hold 阻止关闭；关闭后新任务 `CODESPACE_RELEASING` 而已有任务仍可对账；只有关闭者能重新打开 |
 | 端到端 | PASS，Linux 容器 | 真实 Application、Controller、bootstrap 与 runner，仅 gh/SSH 为桩：约 1.8 MB 多字节日志逐字节一致地导出，关闭入口、停止、停止后从归档读取 |
-| 真实 Codespaces | 见下节 | |
+| 真实 Codespaces | PASS | 见下节 |
+
+## 真实 Codespaces 验证（2026-10-15）
+
+经用户授权在本仓库创建实例 `mcp-lifecycle-test-w54xp57w6f7wv`（basicLinux32gb），通过真实 MCP stdio 服务与真实后台控制进程验证；控制进程由工具调用启动，测试期间本地不再调用任何工具。
+
+| 场景 | 结果 | 实际观察 |
+|---|---|---|
+| start_existing | PASS | dedicated 绑定下 prepare 启动 Shutdown 实例：一次为单次调用 ready（约 30 秒），一次首个 SSH 超过 15 秒返回 unknown / PROCESS_TIMEOUT，同 requestId 重试后 ready |
+| A21：Agent 不再调用工具 | PASS | 任务完成后约 30 秒归档；5 分钟 prepare 租约与 60 秒宽限后关闭入口并请求停止；GitHub 显示 Shutdown 后才记为 stopped / RELEASED / RETAINED；控制进程随后空闲退出 |
+| 停止后读取 | PASS | job_get、job_logs、codespace_release status 从本地归档返回（约 0 秒），实例保持 Shutdown，没有 start 请求 |
+| A22：跨项目租约 + request | PASS | 项目 A 请求释放；项目 B 的运行中任务以 JOB_ACTIVE 阻止停止，结束并归档后立即停止 |
+| 导出 PENDING 后恢复 | PASS | 上一轮未归档的任务在实例下次运行时自动归档 |
+
+真实环境发现并已修复（`99eeb43`）：
+
+1. 带 request（无宽限）时，另一个项目的任务恰好在控制进程的导出与租约检查之间结束，实例被停止而该任务未导出（PENDING）。现先读远端租约再导出，且本机仍在运行的任务阻止停止；修复后实测该任务在停止前 5 秒完成归档。
+2. prepare 在启动等待与 SSH 期间（job_submit 在 SSH 期间）持有本地状态锁，控制进程写入因 STATE_BUSY 失败。现在只在短暂的本地读写期间持锁，修复后实测日志中无 STATE_BUSY。
+
+仍未真实验证：停止请求失败、停止未生效与退避重试（仅模拟）；hold/unhold（远端协议在容器中验证）；本机断网或关机期间的行为；Windows/macOS 客户端；控制进程在 MCP 退出后长时间运行任务的场景只覆盖了短任务。
 
 ## English
 
