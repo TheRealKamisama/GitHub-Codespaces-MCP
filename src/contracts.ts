@@ -77,7 +77,7 @@ export const jobStatusSchema = z.strictObject({
   }),
   steps: z.array(z.strictObject({
     id: z.string(), role: z.string(), optional: z.boolean(),
-    state: z.enum(['pending', 'running', 'passed', 'failed', 'timed_out', 'cancelled', 'not_run']),
+    state: z.enum(['pending', 'running', 'passed', 'failed', 'timed_out', 'cancelled', 'interrupted', 'not_run']),
     exitCode: z.number().int().nullable(), signal: z.string().nullable(), errorCode: z.string().nullable(),
     startedAt: z.number().nullable(), endedAt: z.number().nullable(),
   })),

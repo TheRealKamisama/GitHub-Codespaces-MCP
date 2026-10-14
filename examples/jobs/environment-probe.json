@@ -31,7 +31,7 @@
         "role": "analysis",
         "kind": "shell",
         "shell": "sh",
-        "script": "for tool in git python3 node npm java go cargo docker; do\n  if command -v \"$tool\" >/dev/null 2>&1; then printf '%-8s %s\\n' \"$tool\" \"$(\"$tool\" --version 2>&1 | head -1)\"; else printf '%-8s not installed\\n' \"$tool\"; fi\ndone\n"
+        "script": "for tool in git python3 node npm java go cargo docker; do\n  case \"$tool\" in go) flag=version ;; *) flag=--version ;; esac\n  if command -v \"$tool\" >/dev/null 2>&1; then printf '%-8s %s\\n' \"$tool\" \"$(\"$tool\" \"$flag\" 2>&1 | head -1)\"; else printf '%-8s not installed\\n' \"$tool\"; fi\ndone\n"
       }
     ]
   }

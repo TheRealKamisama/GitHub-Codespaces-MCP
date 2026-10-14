@@ -224,11 +224,17 @@ class Jobs:
                 if cancel_requested:
                     status['state'] = 'cancel_requested'
         steps = [{k: s[k] for k in ('id', 'role', 'optional', 'state', 'exitCode', 'signal', 'errorCode', 'startedAt', 'endedAt')} for s in status['steps']]
+        if status['state'] == 'interrupted' and not status.get('settled'):
+            # The supervisor never finished: a running step was cut short, pending steps never started.
+            for step in steps:
+                step['state'] = {'running': 'interrupted', 'pending': 'not_run'}.get(step['state'], step['state'])
+        # The stored summary is final only once the supervisor settled the job; otherwise derive it from the steps.
+        summary = status['summary'] if status.get('settled') else summarize(steps, 'source' if status['state'] in ('accepted', 'preparing') else None)
         return {'jobId': status['jobId'], 'projectId': status['projectId'], 'digest': status['digest'], 'state': status['state'],
                 'settled': settled, 'observation': observation, 'errorCode': status['errorCode'], 'cancelRequested': cancel_requested,
                 'generation': status['generation'], 'acceptedAt': status['acceptedAt'], 'startedAt': status['startedAt'],
                 'endedAt': status['endedAt'], 'updatedAt': status['updatedAt'], 'source': status['source'], 'steps': steps,
-                'summary': status['summary']}
+                'summary': summary}
 
     def submit(self, job, binding):
         validate_job(job, binding)

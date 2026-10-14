@@ -61,6 +61,7 @@ class PortableTests(unittest.TestCase):
         self.assertEqual(runner.summarize([step('test', 'passed'), step('test', 'failed', True)])['verification'], 'PASS')
         self.assertEqual(runner.summarize([step('test', 'cancelled')]), {'execution': 'INCOMPLETE', 'verification': 'NOT_RUN', 'cleanup': 'NOT_CONFIGURED'})
         self.assertEqual(runner.summarize([step('test', 'pending')], 'source')['execution'], 'NOT_RUN')
+        self.assertEqual(runner.summarize([step('build', 'passed'), step('test', 'interrupted')]), {'execution': 'INCOMPLETE', 'verification': 'NOT_RUN', 'cleanup': 'NOT_CONFIGURED'})
 
     def test_job_validation_rejects_escapes_and_mismatched_binding(self):
         job = {'schemaVersion': 1, 'jobId': 'a' * 64, 'digest': 'b' * 64, 'projectId': 'p', 'timeoutSeconds': 60,
@@ -378,6 +379,9 @@ class LinuxJobs(unittest.TestCase):
         time.sleep(runner.STALE_SECONDS + 1)
         data = self.call('job_get', jobId=job['jobId'])['data']
         self.assertEqual((data['state'], data['errorCode'], data['settled']), ('interrupted', 'SUPERVISOR_LOST', True))
+        self.assertEqual(data['steps'][0]['state'], 'interrupted')
+        # An interruption is never reported as a failed test, and never as PASS.
+        self.assertEqual(data['summary'], {'execution': 'INCOMPLETE', 'verification': 'NOT_RUN', 'cleanup': 'NOT_CONFIGURED'})
         self.assertEqual(self.call('job_submit', job=job)['data']['state'], 'interrupted')
         for pid in marker_processes('3003'):
             os.kill(pid, 9)
