@@ -84,8 +84,10 @@ export class Controller {
       }
     }
 
-    const exports = await this.exportJobs(name, group, exportMs);
+    // Usage first, then exports: a job that settles in between is exported now, and one still running blocks below,
+    // so the instance never stops while a local job still needs exporting (within its window).
     const remote = instanceStatusSchema.parse(await this.app.runner.call(binding, 'instance_status'));
+    const exports = await this.exportJobs(name, group, exportMs, new Set(remote.activeJobs.map(j => j.jobId)));
     const blockers = [...this.remoteBlockers(remote), ...await this.localBlockers(name, group, record.requested), ...exports.blockers];
     record.exportStatus = exports.overdue > 0 ? 'PENDING' : exports.archived > 0 ? 'COMPLETE' : record.exportStatus;
     if (blockers.length > 0) {
@@ -156,7 +158,7 @@ export class Controller {
     return blockers;
   }
 
-  private async exportJobs(name: string, group: Binding[], exportMs: number) {
+  private async exportJobs(name: string, group: Binding[], exportMs: number, remotelyActive: Set<string>) {
     const result = { archived: 0, overdue: 0, blockers: [] as Blocker[] };
     for (const job of await this.jobs(name, group)) {
       if (await this.app.archive.read(job.jobId)) continue;
@@ -167,7 +169,10 @@ export class Controller {
       }
       if (job.submission !== 'accepted') continue;
       const status = jobStatusSchema.parse(await this.app.runner.call(binding, 'job_get', { jobId: job.jobId }));
-      if (!status.settled) continue;
+      if (!status.settled) {
+        if (!remotelyActive.has(job.jobId)) result.blockers.push({ kind: 'JOB_ACTIVE', detail: `${job.projectId} ${job.jobId.slice(0, 12)} ${status.state}` });
+        continue;
+      }
       try {
         const { log, remoteBytes } = await this.fetchLog(binding, job.jobId);
         await this.app.archive.write(status, log, remoteBytes);

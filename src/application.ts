@@ -85,9 +85,17 @@ export class Application {
   async available(binding: Binding) {
     requireThat((await this.checked(binding)).state === 'Available', 'CODESPACE_NOT_READY');
   }
+  // The state lock guards short local read-modify-writes only; it is never held across network calls, so the
+  // controller and other tools are not blocked for the length of an SSH call or an instance start.
+  async briefly<T>(fn: () => Promise<T>): Promise<T> {
+    for (let attempt = 0; ; attempt++) {
+      try { return await this.store.locked(fn); }
+      catch (e) { if (codeOf(e) !== 'STATE_BUSY' || attempt >= 20) throw e; await new Promise(r => setTimeout(r, 100)); }
+    }
+  }
   async prepare(raw: z.input<typeof prepareInput>) {
     const input = prepareInput.parse(raw);
-    return this.store.locked(async () => {
+    const { binding, policy, operation } = await this.briefly(async () => {
       const binding = await this.binding(input.projectId);
       const operationId = digest([input.projectId, input.requestId]);
       requireThat(!input.operationId || input.operationId === operationId, 'OPERATION_MISMATCH');
@@ -100,6 +108,9 @@ export class Application {
       requireThat(!old || old.digest === planDigest, 'IDEMPOTENCY_CONFLICT');
       const operation: Operation = { schemaVersion: 1, operationId, digest: planDigest, projectId: input.projectId, state: 'probing', observation: 'unknown', errorCode: null, handshake: null, updatedAt: new Date().toISOString() };
       await this.store.write('prepare', operationId, operation);
+      return { binding, policy, operation };
+    });
+    const operationId = operation.operationId;
       try {
         let cs = await this.checked(binding);
         if (cs.state !== 'Available' && policy === 'start_existing') {
@@ -110,7 +121,7 @@ export class Application {
           while (cs.state !== 'Available' && Date.now() < deadline) { await this.sleep(3000); cs = await this.gh.get(binding.codespaceName); }
           if (cs.state !== 'Available') {
             operation.state = 'starting'; operation.updatedAt = new Date().toISOString();
-            await this.store.write('prepare', operationId, operation); this.wake(); return operation;
+            await this.briefly(() => this.store.write('prepare', operationId, operation)); this.wake(); return operation;
           }
         }
         requireThat(cs.state === 'Available', 'CODESPACE_NOT_READY');
@@ -122,10 +133,9 @@ export class Application {
         operation.errorCode = code;
       }
       operation.updatedAt = new Date().toISOString();
-      await this.store.write('prepare', operationId, operation);
+      await this.briefly(() => this.store.write('prepare', operationId, operation));
       if (binding.ownership === 'dedicated') this.wake();
       return operation;
-    });
   }
   async probe(project: string, request: string, action: 'start' | 'status') {
     return this.store.locked(async () => {
@@ -163,7 +173,8 @@ export class Application {
   }
   async submitJob(raw: z.input<typeof jobSubmitInput>) {
     const input = jobSubmitInput.parse(raw);
-    return this.store.locked(async () => {
+    // Phase 1: idempotency check and a persisted pending record, before anything can run remotely.
+    const { binding, jobId, planDigest } = await this.briefly(async () => {
       const binding = await this.binding(input.projectId);
       // Idempotency scope: account, repository, project and requestId. The plan digest excludes presentation locale.
       const jobId = digest([binding.expectedAccount.toLowerCase(), binding.repository.toLowerCase(), input.projectId, input.requestId]);
@@ -171,29 +182,40 @@ export class Application {
         remoteProjectRoot: binding.remoteProjectRoot, source: input.source, steps: input.steps, timeoutSeconds: input.timeoutSeconds });
       const old = await this.jobRecord(jobId);
       requireThat(!old || old.digest === planDigest, 'IDEMPOTENCY_CONFLICT');
-      const record: JobRecord = old ?? { schemaVersion: 1, jobId, requestId: input.requestId, projectId: input.projectId, digest: planDigest,
-        codespaceName: binding.codespaceName, remoteProjectRoot: binding.remoteProjectRoot, bindingVersion: binding.version,
-        submission: 'pending', errorCode: null, submittedAt: new Date().toISOString(), observedAt: null, status: null };
-      if (!old) await this.store.write('job', jobId, record);
-      let sent = false;
-      try {
-        await this.available(binding);
-        sent = true;
-        const job = { schemaVersion: 1, jobId, digest: planDigest, projectId: input.projectId, requestId: input.requestId, timeoutSeconds: input.timeoutSeconds,
-          source: { ...input.source, repository: binding.repository }, steps: input.steps };
-        const status = jobStatusSchema.parse(await this.runner.call(binding, 'job_submit', { job }));
-        requireThat(status.jobId === jobId && status.digest === planDigest, 'RUNNER_INVALID_RESPONSE');
-        Object.assign(record, { submission: 'accepted', errorCode: null, status, observedAt: new Date().toISOString() });
-      } catch (e) {
-        // Never downgrade an earlier ambiguous or accepted submission: only a never-sent request is known not to run.
-        if (!sent) { if (record.submission === 'pending') record.submission = 'not_sent'; }
-        else if (record.submission !== 'accepted') record.submission = AMBIGUOUS.includes(codeOf(e)) ? 'unknown' : 'rejected';
-        record.errorCode = codeOf(e);
+      if (!old || old.submission === 'not_sent') {
+        await this.store.write('job', jobId, old ? { ...old, submission: 'pending' } : { schemaVersion: 1, jobId, requestId: input.requestId, projectId: input.projectId,
+          digest: planDigest, codespaceName: binding.codespaceName, remoteProjectRoot: binding.remoteProjectRoot, bindingVersion: binding.version,
+          submission: 'pending', errorCode: null, submittedAt: new Date().toISOString(), observedAt: null, status: null });
       }
-      await this.store.write('job', jobId, record);
-      if (binding.ownership === 'dedicated') this.wake();
-      return record;
+      return { binding, jobId, planDigest };
     });
+    // Phase 2: the remote call, without holding the local state lock.
+    let sent = false, status: JobStatus | undefined, failure: string | undefined;
+    try {
+      await this.available(binding);
+      sent = true;
+      const job = { schemaVersion: 1, jobId, digest: planDigest, projectId: input.projectId, requestId: input.requestId, timeoutSeconds: input.timeoutSeconds,
+        source: { ...input.source, repository: binding.repository }, steps: input.steps };
+      status = jobStatusSchema.parse(await this.runner.call(binding, 'job_submit', { job }));
+      requireThat(status.jobId === jobId && status.digest === planDigest, 'RUNNER_INVALID_RESPONSE');
+    } catch (e) { status = undefined; failure = codeOf(e); }
+    // Phase 3: merge into the latest record; the controller may have reconciled it meanwhile.
+    const record = await this.briefly(async () => {
+      const latest = await this.jobRecord(jobId);
+      requireThat(latest, 'STATE_INVALID');
+      let next: JobRecord;
+      if (status) next = { ...latest, submission: 'accepted', errorCode: null, status, observedAt: new Date().toISOString() };
+      else {
+        next = { ...latest, errorCode: failure! };
+        // Never downgrade an earlier ambiguous or accepted submission: only a never-sent request is known not to run.
+        if (!sent) { if (latest.submission === 'pending') next.submission = 'not_sent'; }
+        else if (latest.submission !== 'accepted') next.submission = AMBIGUOUS.includes(failure!) ? 'unknown' : 'rejected';
+      }
+      await this.store.write('job', jobId, next);
+      return next;
+    });
+    if (binding.ownership === 'dedicated') this.wake();
+    return record;
   }
   private async jobBinding(projectId: string, jobId: string) {
     const binding = await this.binding(projectId);

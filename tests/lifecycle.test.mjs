@@ -243,3 +243,36 @@ test('only one controller runs per state directory', async t => {
     assert.equal(await runController(f.app, { intervalMs: 1, idleTicks: 1 }), true, 'lock released on exit');
   } finally { Controller.prototype.tick = tick; }
 });
+
+test('regression (live): a job that settles during a controller round is exported before the instance stops', async t => {
+  const f = await world(t);
+  await f.app.bind({ ...dedicated, resourcePolicy: { ...dedicated.resourcePolicy, graceSeconds: 0 } });
+  const record = await f.app.submitJob(plan());
+  await f.app.release({ projectId: 'p/one', action: 'request' });   // no grace period to hide the race
+  // The live race: the job is seen running by one check and finishes right after it, within the same round.
+  const call = f.app.runner.call;
+  f.app.runner.call = async (b, action, fields) => {
+    const result = await call(b, action, fields);
+    if (action === 'job_get' && !result.settled) f.w.jobs.set(record.jobId, settle(result));
+    return result;
+  };
+  let r = await f.tick();
+  assert.notEqual(r.release.state, 'stopping', 'must not stop in the round the job was last seen running');
+  for (let i = 0; i < 3 && r.release.state !== 'stopping'; i++) r = await f.tick();
+  assert.equal(r.release.state, 'stopping'); assert.equal(r.release.exportStatus, 'COMPLETE');
+  assert.ok(await f.app.archive.read(record.jobId), 'exported before the stop');
+});
+
+test('regression (live): prepare and job_submit do not hold the local state lock during network calls', async t => {
+  const f = await world(t);
+  await f.app.bind(dedicated);
+  const free = [];
+  const call = f.app.runner.call;
+  f.app.runner.call = async (b, action, fields) => {
+    free.push(await f.store.locked(async () => action));   // would throw STATE_BUSY if the tool still held the lock
+    return call(b, action, fields);
+  };
+  assert.equal((await f.app.prepare({ projectId: 'p/one', requestId: 'p1' })).state, 'ready');
+  assert.equal((await f.app.submitJob(plan())).submission, 'accepted');
+  assert.deepEqual(free, ['handshake', 'job_submit']);
+});
