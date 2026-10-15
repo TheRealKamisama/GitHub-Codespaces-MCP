@@ -7,14 +7,23 @@ import { Store } from './storage.js';
 import { Github } from './github.js';
 import { Application } from './application.js';
 import { Runner, buildSchema } from './transport/runner.js';
+import { LocalGit } from './git.js';
+import { controllerLauncher, runController } from './lifecycle.js';
 
 const args = process.argv.slice(2);
-if (args.length !== 2 || args[0] !== 'serve' || args[1] !== '--stdio') {
-  process.stderr.write('Usage: node dist/cli.js serve --stdio\n'); process.exitCode = 2;
+const serve = args.length === 2 && args[0] === 'serve' && args[1] === '--stdio';
+const controller = args.length === 1 && args[0] === 'controller';
+if (!serve && !controller) {
+  process.stderr.write('Usage: node dist/cli.js serve --stdio\n       node dist/cli.js controller   (started automatically; releases dedicated Codespaces)\n'); process.exitCode = 2;
 } else {
   const build = buildSchema.parse(JSON.parse(await readFile(new URL('./build.json', import.meta.url), 'utf8')));
   const state = process.env.CODESPACE_MCP_STATE_DIR ? resolve(process.env.CODESPACE_MCP_STATE_DIR) : join(process.env.LOCALAPPDATA ?? join(homedir(), '.local', 'state'), 'github-codespace-mcp');
   const gh = new Github();
-  const app = new Application(new Store(state), gh, new Runner(gh, build));
-  await createServer(app, build).connect(new StdioServerTransport());
+  if (serve) {
+    // Startup makes no cloud calls; the controller is launched only by tool calls that touch a dedicated binding.
+    const app = new Application(new Store(state), gh, new Runner(gh, build), new LocalGit(), { wake: controllerLauncher(state) });
+    await createServer(app, build).connect(new StdioServerTransport());
+  } else {
+    await runController(new Application(new Store(state), gh, new Runner(gh, build)));
+  }
 }

@@ -3,11 +3,45 @@ import base64
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
+
+
+ACTIONS = ('handshake', 'diagnostic_start', 'diagnostic_get', 'job_submit', 'job_get', 'job_cancel', 'job_logs',
+           'instance_status', 'instance_close', 'instance_reopen', 'hold_set', 'hold_clear')
+FORWARDED = ('probeId', 'job', 'jobId', 'cursor', 'maxBytes', 'waitSeconds', 'closeId', 'holdId', 'holdSeconds')
+# One registry per Codespace, outside every project root, so release decisions see all projects and clients.
+INSTANCE_ROOT = '/workspaces/.codespace-mcp-instance'
+
+
+PLATFORM_ENV = '/workspaces/.codespaces/shared/.env'
+
+
+def platform_environment(environ, path=PLATFORM_ENV):
+    """Non-login `gh codespace ssh` sessions lack the Codespaces platform variables (CODESPACE_NAME, git token).
+
+    Login shells get them from profile scripts, but those may also run user dotfiles that write to stdout and
+    corrupt the protocol. Read the platform file directly instead; existing variables are never overridden.
+    """
+    if environ.get('CODESPACE_NAME'):
+        return dict(environ)
+    merged = dict(environ)
+    try:
+        with open(path, encoding='utf-8') as stream:
+            text = stream.read(65537)
+    except OSError:
+        return merged
+    if len(text) > 65536:
+        return merged
+    for line in text.splitlines():
+        key, separator, value = line.partition('=')
+        if separator and re.fullmatch('[A-Z_][A-Z0-9_]{0,127}', key) and key not in environ:
+            merged[key] = value
+    return merged
 
 
 def require(condition, code):
@@ -41,11 +75,12 @@ def atomic(path, data):
 
 def main():
     require(sys.platform == 'linux', 'PLATFORM_UNSUPPORTED')
+    os.environ.update(platform_environment(os.environ))
     import fcntl
-    raw = sys.stdin.buffer.read(262145)
-    require(len(raw) <= 262144, 'STATE_INVALID')
+    raw = sys.stdin.buffer.read(524289)
+    require(len(raw) <= 524288, 'STATE_INVALID')
     request = json.loads(raw)
-    require(request['protocolVersion'] == 1 and request['action'] in ('handshake', 'diagnostic_start', 'diagnostic_get'), 'RUNNER_INCOMPATIBLE')
+    require(request['protocolVersion'] == 1 and request['action'] in ACTIONS, 'RUNNER_INCOMPATIBLE')
     binding, build = request['binding'], request['build']
     require(os.environ.get('CODESPACE_NAME') == binding['codespaceName'], 'CODESPACE_IDENTITY_MISMATCH')
     require(shutil.which('git') is not None, 'CAPABILITY_MISSING')
@@ -89,7 +124,19 @@ def main():
             require(json.loads(metadata.read_text()) == build, 'RUNNER_INCOMPATIBLE')
         else:
             atomic(metadata, json.dumps(build).encode())
-    result = subprocess.run([sys.executable, str(executable)], input=json.dumps({'protocolVersion': 1, 'action': request['action'], 'probeId': request.get('probeId'), 'root': str(managed)}), text=True, capture_output=True, timeout=6)
+    # Override only isolates test suites (which may themselves run as jobs) from the real instance registry.
+    instance_root = safe_path(os.environ.get('CODESPACE_MCP_INSTANCE_ROOT', INSTANCE_ROOT))
+    (instance_root / 'projects').mkdir(parents=True, exist_ok=True)
+    registration = instance_root / 'projects' / (hashlib.sha256(str(root).encode()).hexdigest() + '.json')
+    require(not registration.is_symlink(), 'PATH_INVALID')
+    if not registration.exists():
+        atomic(registration, json.dumps({'projectRoot': str(root)}).encode())
+    forwarded = {key: request[key] for key in FORWARDED if key in request}
+    payload = {**forwarded, 'protocolVersion': 1, 'action': request['action'], 'root': str(managed), 'instanceRoot': str(instance_root),
+               'binding': {'projectId': binding['projectId'], 'repository': binding['repository']}}
+    wait = request.get('waitSeconds', 0)
+    require(isinstance(wait, int) and 0 <= wait <= 20, 'STATE_INVALID')
+    result = subprocess.run([sys.executable, str(executable)], input=json.dumps(payload), text=True, capture_output=True, timeout=10 + wait)
     require(result.returncode == 0, 'RUNNER_FAILED')
     print(result.stdout.strip())
 

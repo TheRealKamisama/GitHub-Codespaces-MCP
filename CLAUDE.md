@@ -1,19 +1,24 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # GitHub Codespaces MCP — Claude 交接说明
 
 交接日期：2026-10-14。请先读本文，再读引用的项目文档。本文是接手开发的 Summary，不是云端验收报告。
 
 ## 项目目标与当前阶段
 
-为本地 AI Agent 提供仅以 **GitHub Codespaces** 为远端后端的 MCP。开发在本地进行；宿主按用户授权完成 **Commit → Push**，MCP 在远端获取并验证精确提交，再执行通用任务，取回结果并自动释放受管资源。Docker 是可选任务模板，不是核心依赖。
+为本地 AI Agent 提供仅以 **GitHub Codespaces** 为远端后端的 MCP。开发在本地进行；宿主按用户授权完成 **Commit → Push**，MCP 在远端获取并验证精确提交，再执行通用任务，取回结果并自动释放受管资源。MCP 是通用 worker：Docker 与其他工具链一样只是步骤调用的普通命令，不设专用模板或步骤类型（设计 0.5，§7.3）。
 
-当前仅交付了 **M0 传输 PoC 的本地实现**。代码基线为 `7dfd8f1966f53b44678ac691ceb1d067b376a8d8`，原开发分支为 `codex/m0-protocol-transport`。本次交接另有文档提交；接手时用 `git log`、`git status` 和远端 refs 确认最终版本，不把基线 SHA 当成永远最新。
+已交付 **M0 传输 PoC**、**M1 第一部分（精确提交任务，docs/M1.md）** 与 **M1 第二部分（使用后自动停止，docs/LIFECYCLE.md）**，经 PR #1 合并到 main（2026-10-15），均已在真实 Codespace 上验证。M1 只剩产物（收集、上传、下载）未完成。M0 代码基线为 `7dfd8f1966f53b44678ac691ceb1d067b376a8d8`，原开发分支为 `codex/m0-protocol-transport`。本次交接另有文档提交；接手时用 `git log`、`git status` 和远端 refs 确认最终版本，不把基线 SHA 当成永远最新。
 
 内部 package 版本为 `0.1.0-alpha.0`，`private: true` 防止误发 npm；许可证 MIT。没有 Release、标签、公开软件包或完整云端验收。用户本次授权创建并推送 **Private** GitHub 仓库，名称中的空格规范化为 `GitHub-Codespaces-MCP`，账号为 `TheRealKamisama`。不要擅自改成 Public。
 
 ## 必读文档
 
 1. [README.md](README.md)：项目概览。
-2. [docs/M0.md](docs/M0.md)：**当前真实可用范围**、源码运行、故障边界和验证证据。
+2. [docs/M0.md](docs/M0.md)：**M0 可用范围**、源码运行、故障边界和验证证据。
+   [docs/M1.md](docs/M1.md)：**M1 首个切片**的任务模型、幂等恢复、远端布局、未实现项和证据。
 3. [CODESPACE_MCP_DEVELOPMENT.md](CODESPACE_MCP_DEVELOPMENT.md)：完整产品目标、模块边界、M0–M3、A01–A28 验收；大量能力仍未实现。
 4. [docs/MCP_ENGINEERING_PRINCIPLES.md](docs/MCP_ENGINEERING_PRINCIPLES.md)：英文工具契约、中英输出、协议与安全原则、P01–P12。
 5. [CONTRIBUTING.md](CONTRIBUTING.md)：Git、验证、兼容、版本和发行规则。
@@ -30,16 +35,23 @@
 | `src/cli.ts`、`src/mcp.ts` | stdio MCP；仅声明 tools capability；启动时不访问云端 |
 | `src/contracts.ts` | 严格输入与输出 schema，英文标识，schemaVersion=1 |
 | `src/github.ts` | gh 身份检查、只读 API、实例查询和分页 |
-| `src/application.ts` | 本机绑定、prepare 持久化/恢复、诊断编排 |
+| `src/application.ts` | 本机绑定、prepare 持久化/恢复、诊断编排、job 记录（先持久化再远端调用）与对账 |
+| `src/lifecycle.ts` | 本地释放控制进程（`node dist/cli.js controller`，按需启动、单实例锁）：对账、导出归档、统计租约、宽限、远端原子关闭、停止并等 GitHub 确认 Shutdown。只在本地状态锁内做短写入，从不跨网络调用持锁 |
+| `src/archive.ts` | settled 任务的本地归档（状态、日志、SHA-256 回执），任务读取优先走归档，不重启实例 |
+| `src/git.ts` | `project_inspect` 的只读本地 git 检查；GitHub remote 解析不返回凭据 |
 | `src/storage.ts` | JSON 状态、原子替换、跨进程目录锁 |
 | `src/transport/process.ts` | shell=false、argv、时间/输出限制、Windows 进程树清理 |
 | `src/transport/runner.ts` | 固定 SSH 入口、stdin JSON、随包 runner 摘要验证 |
 | `runner/bootstrap.py` | 空目录归属检查、路径检查、安装与调用 runner |
-| `runner/main.py` | 握手、generation、固定十秒 detached 诊断与查询 |
+| `runner/main.py` | 握手、generation、固定十秒诊断；`Jobs`（提交/查询/日志/取消）与 detached `Supervisor`（fetch→精确 SHA worktree→运行槽→步骤进程组→cleanup）。status.json 只由 supervisor 写，取消只写标记文件，interrupted/stale 在读取时计算 |
 | `scripts/build.mjs` | 复制 runner，生成 version/Git SHA/dirty/runner 摘要元数据 |
-| `tests/` | Node 本地/模拟/SDK 契约，以及 Python portable/Linux 集成测试 |
+| `tests/` | Node 本地/模拟/SDK 契约（`jobs.test.mjs` 为 job/inspect）、Linux-only 端到端（`e2e_linux.test.mjs`，gh 桩替代 SSH），以及 Python portable/Linux 集成测试 |
+| `examples/jobs/` | 可提交的 job 计划示例（docs/SCENARIOS.md）；`checkedIn: linux-container` 的示例由 `runner_test.py` 实际运行并核对 `expect`，其余由 `tests/examples.test.mjs` 做 schema 校验。新增示例必须如实标注 |
+| `scripts/linux-container-test.sh` | 在一次性容器（tmpfs `/workspaces`）中运行 Linux 集成与端到端检查 |
 
-当前只有五个工具：
+调用链（需跨文件才能看清）：`cli.ts` 读取 `dist/build.json`（缺失即无法启动，必须先构建），状态目录为 `CODESPACE_MCP_STATE_DIR`，否则 `%LOCALAPPDATA%` 或 `~/.local/state` 下的 `github-codespace-mcp` → `mcp.ts` 把工具调用分派到 `Application` → `Application` 经 `Github`（所有 gh 调用都走 `transport/process.ts` 的 `execute`）和 `RunnerPort` 工作。`Runner.call` 每次都重新校验 `dist/runner/main.py` 摘要，再通过 `gh codespace ssh` 下发**固定命令**（base64 内嵌的 `bootstrap.py`）；action、binding、build 元数据与 runner 源码全部走 stdin JSON。握手要求远端 version/gitSha/dirty/runnerSha256 与本地构建完全一致，因此改动 `runner/main.py` 或产生新提交后都必须重新构建。`Github` 的 `Executor` 和 `RunnerPort` 是测试注入模拟 gh/runner 的接缝。
+
+当前有十个工具，M0 的五个：
 
 - `environment_check`：检查 gh、结构化认证状态与 `/user` 实际账号。`gh auth status --json` 退出 0 不等于认证成功。
 - `codespace_list`：已有实例分页列表，不启动实例。
@@ -47,17 +59,23 @@
 - `codespace_prepare`：先记录 operation，再检查 Available、安装 runner 并握手；同 requestId 重用 operationId。每次重新探测，不把旧 ready 当成当前 ready。
 - `runner_probe`：start/status 一个固定十秒诊断，同 requestId 不重复启动；**不是通用 job**。
 
+M1 首个切片新增（详见 docs/M1.md）：
+
+- `project_inspect`：只读本地 git；仅 HEAD 已在上游跟踪 ref 中时给出 `suggestedSource`。
+- `job_submit`：返回本机 job 记录；必须检查 `data.submission`（`unknown` 时只能用同 requestId 对账）与 `data.status`。仅 `revision` 来源，完整 ref + 40 位 SHA，不可达时失败而不改测分支最新提交。
+- `job_get` / `job_logs` / `job_cancel`：远端为权威状态；`settled` 表示不再变化；取消仅在进程组确认退出后为 `cancelled`。
+
 工具输出同时给出 structuredContent 和相同 JSON 文本；英文稳定错误码，中英错误消息。prepare 的调用结果包含操作状态，必须检查 `data.state` 和 `errorCode`；`ready` 仅说明 M0 传输就绪，不表示项目初始化或任意任务就绪。
 
 ## 尚未实现
 
-project_inspect、本地项目根目录发现、远端 fetch/精确 SHA 检出、通用 job_submit/get/logs/cancel、步骤执行器、服务、输入上传、产物接口、端口转发、Docker 模板、实例创建/启动/停止/删除、本地回收控制进程、实例租约和自动导出/释放。
+本地项目根目录写入绑定、命名任务配置、workspace 执行上下文、服务、输入上传、产物接口、结果归档、保留期清理、排队期限、端口转发、Docker 模板、实例创建/启动/停止/删除、本地回收控制进程、实例租约和自动导出/释放。
 
 目前 start_existing/create_if_missing 被 schema 拒绝。既有共享实例不会被本 PoC 自动停止。不要通过新增一个“执行任意命令”捷径绕开身份绑定、持久化幂等、精确 SHA 或资源生命周期。
 
 ## 验证证据及复现
 
-以下是 **2026-10-13 的已完成记录**，本次文档交接不冒充重新测试：
+2026-10-13（Windows）与 2026-10-14（Linux）的记录；完整矩阵见 docs/M0.md、docs/M1.md：
 
 | 检查 | 结果与范围 |
 |---|---|
@@ -65,22 +83,30 @@ project_inspect、本地项目根目录发现、远端 fetch/精确 SHA 检出�
 | Node 测试 | PASS，14 项；真实 SDK stdio、Windows 参数/原子写入/进程树，以及模拟 gh/runner 故障恢复 |
 | Python portable | PASS，5 项；包含模拟 sleep 的诊断状态测试，不能证明后台存活 |
 | gh 身份模块 | PASS，真实只读；gh 2.100.0、keyring 和 `/user` 账号一致；不证明 Codespaces 权限 |
-| Linux 安装/后台进程集成 | NOT RUN；当时无可用 Linux/WSL，1 项明确跳过 |
-| 真实 Codespaces 安装/SSH 断线/重启 | NOT RUN；未绑定或修改云端实例 |
-| 精确 SHA、通用任务、自动回收 | NOT RUN，未实现 |
+| Linux 客户端（2026-10-14） | PASS；SteamOS Node 24.21.0，类型检查/构建、21 项 Node（Linux 端到端在主机跳过）、Python portable 7 项 |
+| Linux runner 与任务集成 | PASS，容器；podman python:3.12-bookworm + tmpfs `/workspaces`，M0 安装/诊断与 M1 精确 SHA/取消/超时/排队/中断；本地 bare 仓库替代 github.com |
+| Linux 端到端 | PASS，容器；真实 Application→Runner→bootstrap→runner，仅 gh/SSH 为桩 |
+| 真实 Codespaces 自动停止（2026-10-15） | PASS；实例 `mcp-lifecycle-test-w54xp57w6f7wv`（测试后已删除）：A21 无工具调用自动归档与停止、A22 跨项目租约、停止后离线读取、start_existing；发现并修复导出竞争与锁占用。详见 docs/LIFECYCLE.md |
+| 真实 Codespaces（2026-10-14） | PASS，部分；用户授权在本仓库创建实例 `mcp-live-test-w99669w746xc54qr`（测试后已按用户要求删除）。prepare、跨会话存活、私有 fetch、精确 SHA、本项目 CI、示例、Docker/Postgres、取消、排队、停止重启 interrupted。详见 docs/M1.md |
+| 产物、自动导出与回收 | 未实现 |
 
 ```sh
 npm ci
 npm run typecheck
 npm test
 python tests/runner_test.py
+./scripts/linux-container-test.sh   # 先 npm run build；需 podman 或 docker
 ```
 
-`npm test` 包含构建。Python 命令需要可用的 Python 3；Linux 集成只在 Linux 且已有可写 `/workspaces` 时执行。Windows Node 22、macOS/Linux 本地客户端兼容性均未验证。
+单项测试：Node 测试从 `dist/` 导入，必须先 `npm run build`，再执行 `node --test --test-name-pattern "<名称片段>" tests/core.test.mjs`；Python 用 `python tests/runner_test.py PortableTests.test_generation_change_is_interruption_not_success`。`tests/runner_test.py` 直接按文件路径加载 `runner/main.py`，不需要构建。
+
+`npm test` 包含构建。Python 命令需要可用的 Python 3；Linux 集成与 Linux 端到端只在 Linux 且已有可写 `/workspaces` 时执行（否则明确跳过），本地开发用容器脚本。Windows Node 22 与 macOS 客户端未验证；M1 代码尚未在 Windows 上运行。测试用 `GIT_CONFIG_COUNT/KEY/VALUE` 的 `url.<base>.insteadOf` 把 `https://github.com/` 指向本地 bare 仓库，生产代码没有测试钩子。
 
 宿主直接启动 `node /absolute/path/to/dist/cli.js serve --stdio`；不要用 npm start 作为 stdio 宿主入口，npm 的标题输出会污染协议。构建要求本仓库 Git 元数据；输出 `dist/build.json`，不要提交 dist。
 
 ## 已知问题与需要复核的边界
+
+- 真实 Codespace 上 `gh codespace ssh` 是非登录会话，没有 `CODESPACE_NAME`/git 令牌；bootstrap 从 `/workspaces/.codespaces/shared/.env` 补充缺失变量。不要改成 `bash -l`：用户 dotfiles 可能写 stdout 污染协议。
 
 - Windows 受限沙箱下 gh 曾报告认证错误，沙箱外真实认证模块验证成功；不要据此让用户反复登录或提供 token。
 - npm 默认缓存在受限环境可能 EPERM，可进程级设置仓库内 `.cache/npm`；不改全局设置。
@@ -94,13 +120,15 @@ python tests/runner_test.py
 ## 建议接手顺序
 
 1. 确认本地状态、origin、当前 SHA，阅读以上文档；复现适用的本地检查。先修真实发现的问题，不把完善所有技术规范作为开工前提。
-2. 补齐 M0 的 Linux 集成与真实 Codespaces 传输验收。已有实例也需明确目标、可用目录及操作授权；不要从仓库推送授权推导创建/启动计费资源授权。最小真实验证步骤见 docs/M0.md。
-3. 推进 M1：精确 pushed SHA 验证、隔离源码、通用多步骤任务、持久化 requestId→jobId、查询/日志/取消、产物；**同时完成本地回收控制进程、实例级租约、结果归档和自动停止**。自动回收未通过真实验收就不算任务闭环完成。
-4. 再做 M2 项目体验、服务/端口/恢复和可选删除；M3 Docker 与发行。不要为赶进度提前发布“可用预览版”。
+2. M0/M1 已在容器与真实 Codespace 上验证（2026-10-14，docs/M1.md）；未验证项：调用中途 SSH 断开/响应丢失、提交后分支前进、Windows/macOS 客户端。已有实例也需明确目标、可用目录及操作授权；不要从仓库推送授权推导创建/启动计费资源授权。最小真实验证步骤见 docs/M0.md。
+3. 推进 M1：精确 SHA、隔离源码、多步骤任务、requestId 幂等、查询/日志/取消已完成首个切片（docs/M1.md）；下一步是产物、在 Windows 上运行检查，并**同时完成本地回收控制进程、实例级租约、结果归档和自动停止**。自动回收未通过真实验收就不算任务闭环完成。
+4. 再做 M2 项目体验、服务/端口/恢复和可选删除；M3 发行准备（Docker 只作为通用步骤的验收场景）。不要为赶进度提前发布“可用预览版”。
 
 ## 必须保留的约束
 
 - 仅 GitHub Codespaces；不扩展通用 SSH、其他云或本地容器后端。
+- 只有 dedicated 绑定能被本工具启动或停止；shared 实例从不启动/停止。停止只在 GitHub 确认 Shutdown 后报告，存储始终 RETAINED。
+- 保持通用：不为 Docker 或任何工具链添加专用步骤类型、字段或分支；进程组外资源用 `CODESPACE_MCP_JOB_ID` 标签 + cleanup 步骤处理。
 - 本地 Commit/Push 属宿主职责；MCP 消费已推送的完整 SHA，并在执行前验证实际 HEAD 与请求一致，不隐式 pull/merge 或改测最新分支。
 - 长任务独立于 MCP/SSH 连接；幂等接受、状态查询、观测失败、任务失败和取消确认分别处理。
 - 任务结束默认导出后停止受管实例；共享实例须协调全部租约；删除是独立策略且须确保保留数据已导出。停止保留存储，不能声称释放全部资源。

@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { AppError } from './errors.js';
@@ -19,6 +19,16 @@ export class Store {
     const target = this.path(kind, id), temp = `${target}.${randomUUID()}.tmp`;
     try { await writeFile(temp, JSON.stringify(value), { flag: 'wx', mode: 0o600 }); await rename(temp, target); }
     finally { await rm(temp, { force: true }); }
+  }
+  // File names are digests, so listing returns stored values; each kind's schema carries its own identity.
+  async list(kind: string): Promise<unknown[]> {
+    let names: string[];
+    try { names = await readdir(this.root); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return []; throw e; }
+    const values = [];
+    for (const name of names.filter(n => n.startsWith(`${kind}-`) && n.endsWith('.json') && /^[a-z]+-[a-f0-9]{64}\.json$/.test(n))) {
+      try { values.push(JSON.parse(await readFile(join(this.root, name), 'utf8'))); } catch { throw new AppError('STATE_INVALID'); }
+    }
+    return values;
   }
   async locked<T>(fn: () => Promise<T>): Promise<T> {
     await mkdir(this.root, { recursive: true });

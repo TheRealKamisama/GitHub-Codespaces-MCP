@@ -1,0 +1,45 @@
+{
+  "title": "Build a Docker image and run its tests in a container",
+  "demonstrates": [
+    "Docker through ordinary steps",
+    "image referenced by ID, not latest",
+    "labelled containers removed by cleanup"
+  ],
+  "requires": [
+    "docker"
+  ],
+  "checkedIn": "schema-only",
+  "plan": {
+    "timeoutSeconds": 3600,
+    "steps": [
+      {
+        "id": "build",
+        "role": "build",
+        "kind": "command",
+        "argv": [
+          "docker",
+          "build",
+          "--target",
+          "test",
+          "--iidfile",
+          ".image-id",
+          "."
+        ]
+      },
+      {
+        "id": "test",
+        "role": "test",
+        "kind": "shell",
+        "shell": "sh",
+        "script": "mkdir -p reports\ndocker run --label codespace-mcp.job=$CODESPACE_MCP_JOB_ID -v \"$PWD/reports:/reports\" \"$(cat .image-id)\" python -m pytest --junitxml=/reports/junit.xml\n"
+      },
+      {
+        "id": "remove-containers",
+        "role": "cleanup",
+        "kind": "shell",
+        "shell": "sh",
+        "script": "docker ps -aq --filter label=codespace-mcp.job=$CODESPACE_MCP_JOB_ID | xargs -r docker rm -f\n"
+      }
+    ]
+  }
+}

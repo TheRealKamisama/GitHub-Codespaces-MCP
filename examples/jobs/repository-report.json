@@ -1,0 +1,44 @@
+{
+  "title": "Analysis job: report on the checked-out repository",
+  "demonstrates": [
+    "analysis role (verification NOT_CONFIGURED, not PASS)",
+    "git available inside the worktree",
+    "pipelines via a shell step"
+  ],
+  "requires": [
+    "sh",
+    "git"
+  ],
+  "checkedIn": "linux-container",
+  "expect": {
+    "state": "succeeded",
+    "summary": {
+      "execution": "PASS",
+      "verification": "NOT_CONFIGURED",
+      "cleanup": "NOT_CONFIGURED"
+    }
+  },
+  "plan": {
+    "timeoutSeconds": 300,
+    "steps": [
+      {
+        "id": "commit",
+        "role": "analysis",
+        "kind": "command",
+        "argv": [
+          "git",
+          "log",
+          "-1",
+          "--format=commit %H%nauthor %an%ndate %cI%n%s"
+        ]
+      },
+      {
+        "id": "files-by-type",
+        "role": "analysis",
+        "kind": "shell",
+        "shell": "sh",
+        "script": "echo \"tracked files: $(git ls-files | wc -l)\"\ngit ls-files | sed -n 's/.*\\.\\([A-Za-z0-9]*\\)$/\\1/p' | sort | uniq -c | sort -rn | head -20\n"
+      }
+    ]
+  }
+}

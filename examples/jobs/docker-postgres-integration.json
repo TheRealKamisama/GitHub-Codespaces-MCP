@@ -1,0 +1,41 @@
+{
+  "title": "Integration tests against a disposable Postgres container",
+  "demonstrates": [
+    "daemon-managed resources outside the process group",
+    "readiness wait",
+    "label-based cleanup after success, failure or cancel"
+  ],
+  "requires": [
+    "docker",
+    "python3",
+    "pytest"
+  ],
+  "checkedIn": "schema-only",
+  "plan": {
+    "timeoutSeconds": 1800,
+    "steps": [
+      {
+        "id": "database",
+        "role": "setup",
+        "kind": "shell",
+        "shell": "sh",
+        "timeoutSeconds": 180,
+        "script": "docker run -d --label codespace-mcp.job=$CODESPACE_MCP_JOB_ID --name \"pg-$CODESPACE_MCP_JOB_ID\" -e POSTGRES_PASSWORD=test -p 127.0.0.1::5432 postgres:16\nfor i in $(seq 1 60); do docker exec \"pg-$CODESPACE_MCP_JOB_ID\" pg_isready -U postgres && exit 0; sleep 1; done\necho \"postgres never became ready\" >&2; exit 1\n"
+      },
+      {
+        "id": "integration",
+        "role": "test",
+        "kind": "shell",
+        "shell": "sh",
+        "script": "port=$(docker port \"pg-$CODESPACE_MCP_JOB_ID\" 5432/tcp | head -1 | sed 's/.*://')\nDATABASE_URL=\"postgresql://postgres:test@127.0.0.1:$port/postgres\" python3 -m pytest tests/integration\n"
+      },
+      {
+        "id": "remove-database",
+        "role": "cleanup",
+        "kind": "shell",
+        "shell": "sh",
+        "script": "docker ps -aq --filter label=codespace-mcp.job=$CODESPACE_MCP_JOB_ID | xargs -r docker rm -f\n"
+      }
+    ]
+  }
+}

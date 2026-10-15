@@ -1,0 +1,72 @@
+{
+  "title": "A failing test: later steps are not run, cleanup still runs",
+  "demonstrates": [
+    "FAIL is never hidden",
+    "not_run vs failed",
+    "cleanup after failure"
+  ],
+  "requires": [
+    "sh"
+  ],
+  "checkedIn": "linux-container",
+  "expect": {
+    "state": "failed",
+    "errorCode": "STEP_FAILED",
+    "summary": {
+      "execution": "FAIL",
+      "verification": "FAIL",
+      "cleanup": "PASS"
+    },
+    "steps": {
+      "build": "passed",
+      "unit": "failed",
+      "integration": "not_run",
+      "tidy": "passed"
+    }
+  },
+  "plan": {
+    "timeoutSeconds": 300,
+    "steps": [
+      {
+        "id": "build",
+        "role": "build",
+        "kind": "command",
+        "argv": [
+          "sh",
+          "-c",
+          "echo building"
+        ]
+      },
+      {
+        "id": "unit",
+        "role": "test",
+        "kind": "command",
+        "argv": [
+          "sh",
+          "-c",
+          "echo \"1 of 3 tests failed\" >&2; exit 1"
+        ]
+      },
+      {
+        "id": "integration",
+        "role": "test",
+        "kind": "command",
+        "argv": [
+          "sh",
+          "-c",
+          "echo never printed"
+        ]
+      },
+      {
+        "id": "tidy",
+        "role": "cleanup",
+        "kind": "command",
+        "argv": [
+          "sh",
+          "-c",
+          "echo cleanup ran"
+        ]
+      }
+    ]
+  }
+}
