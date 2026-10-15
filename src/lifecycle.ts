@@ -12,6 +12,11 @@ export const PREPARE_LEASE_MS = 5 * 60_000;
 const RECONCILE_AFTER_MS = 60_000;
 const STOP_CONFIRM_MS = 120_000;
 const MAX_ATTEMPTS = 5;
+// About five minutes of failed rounds for one instance (e.g. it was deleted elsewhere): stop counting it as busy so
+// this controller can exit; the next tool call that touches the binding starts a fresh one.
+const MAX_CONSECUTIVE_FAILURES = 20;
+// The instance (or GitHub) could not be reached: nothing can be concluded about any job, so the round is retried.
+const UNREACHABLE = ['TRANSPORT_UNAVAILABLE', 'PROCESS_TIMEOUT', 'PROCESS_CLEANUP_UNCONFIRMED', 'GITHUB_REQUEST_FAILED', 'OUTPUT_LIMIT', 'GH_NOT_FOUND', 'AUTH_REQUIRED'];
 const LOG_PAGE_BYTES = 1024 * 1024;
 const TRANSITIONAL = ['Queued', 'Provisioning', 'Awaiting', 'Created', 'Starting', 'Updating', 'Rebuilding', 'ShuttingDown'];
 type Blocker = ReleaseRecord['blockers'][number];
@@ -23,6 +28,7 @@ type Blocker = ReleaseRecord['blockers'][number];
  * It never holds the local state lock across a network call.
  */
 export class Controller {
+  private failures = new Map<string, number>();
   constructor(private app: Application, private now: () => number = () => Date.now(), private log: (line: string) => void = () => {}) {}
 
   async tick(): Promise<boolean> {
@@ -34,11 +40,15 @@ export class Controller {
     let busy = false;
     for (const [name, group] of groups) {
       if (!group.some(b => b.ownership === 'dedicated')) continue;
-      try { if (await this.instance(name, group)) busy = true; }
-      catch (e) {
-        this.log(`${name}: ${codeOf(e)}`);
+      try {
+        if (await this.instance(name, group)) busy = true;
+        this.failures.delete(name);
+      } catch (e) {
+        const failures = (this.failures.get(name) ?? 0) + 1;
+        this.failures.set(name, failures);
+        this.log(`${name}: ${codeOf(e)} (${failures} in a row)`);
         await this.save(name, group, r => ({ ...r, errorCode: codeOf(e) }));
-        busy = true;
+        if (failures < MAX_CONSECUTIVE_FAILURES) busy = true;
       }
     }
     return busy;
@@ -143,7 +153,10 @@ export class Controller {
   private async localBlockers(name: string, group: Binding[], requested: boolean): Promise<Blocker[]> {
     const blockers: Blocker[] = [];
     for (const job of await this.jobs(name, group)) {
-      if (job.submission === 'pending' || job.submission === 'unknown') blockers.push({ kind: 'SUBMISSION_UNCONFIRMED', detail: `${job.projectId} ${job.requestId}` });
+      // Only while a submission may still be in flight. Afterwards anything that actually runs is in the remote
+      // registry, and an unresolvable record must not keep the instance (and its cost) alive indefinitely.
+      const inFlight = this.now() - Date.parse(job.submittedAt) <= RECONCILE_AFTER_MS;
+      if ((job.submission === 'pending' || job.submission === 'unknown') && inFlight) blockers.push({ kind: 'SUBMISSION_UNCONFIRMED', detail: `${job.projectId} ${job.requestId}` });
     }
     // A recent prepare is a short lease so "prepare, then submit" is not raced by the release; an explicit request skips it.
     if (!requested) {
@@ -158,17 +171,30 @@ export class Controller {
     return blockers;
   }
 
+  // Per-job calls go to where the job was submitted, which may differ from a binding that was moved since.
+  private located(group: Binding[], job: JobRecord): Binding {
+    return { ...group.find(b => b.projectId === job.projectId)!, remoteProjectRoot: job.remoteProjectRoot };
+  }
+
   private async exportJobs(name: string, group: Binding[], exportMs: number, remotelyActive: Set<string>) {
     const result = { archived: 0, overdue: 0, blockers: [] as Blocker[] };
     for (const job of await this.jobs(name, group)) {
       if (await this.app.archive.read(job.jobId)) continue;
-      const binding = group.find(b => b.projectId === job.projectId)!;
+      const binding = this.located(group, job);
       if ((job.submission === 'pending' || job.submission === 'unknown') && this.now() - Date.parse(job.submittedAt) > RECONCILE_AFTER_MS) {
         await this.reconcile(binding, job);
         continue;
       }
       if (job.submission !== 'accepted') continue;
-      const status = jobStatusSchema.parse(await this.app.runner.call(binding, 'job_get', { jobId: job.jobId }));
+      let status;
+      try { status = jobStatusSchema.parse(await this.app.runner.call(binding, 'job_get', { jobId: job.jobId })); }
+      catch (e) {
+        if (UNREACHABLE.includes(codeOf(e))) throw e;
+        // One unreadable job must not keep the whole instance running: its export stays pending, remote files remain.
+        this.log(`${name}: cannot export ${job.jobId.slice(0, 12)}: ${codeOf(e)}`);
+        result.overdue++;
+        continue;
+      }
       if (!status.settled) {
         if (!remotelyActive.has(job.jobId)) result.blockers.push({ kind: 'JOB_ACTIVE', detail: `${job.projectId} ${job.jobId.slice(0, 12)} ${status.state}` });
         continue;

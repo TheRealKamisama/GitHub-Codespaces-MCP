@@ -276,3 +276,36 @@ test('regression (live): prepare and job_submit do not hold the local state lock
   assert.equal((await f.app.submitJob(plan())).submission, 'accepted');
   assert.deepEqual(free, ['handshake', 'job_submit']);
 });
+
+test('review: unreadable or moved job records never keep an instance running, and persistent failures let the controller exit', async t => {
+  const f = await world(t);
+  await f.app.bind({ ...dedicated, resourcePolicy: { ...dedicated.resourcePolicy, graceSeconds: 0 } });
+  const moved = await f.app.submitJob(plan('moved'));
+  const broken = await f.app.submitJob(plan('broken'));
+  for (const id of [moved.jobId, broken.jobId]) f.w.jobs.set(id, settle(f.w.jobs.get(id)));
+  await f.app.bind({ ...dedicated, remoteProjectRoot: '/workspaces/elsewhere', resourcePolicy: { ...dedicated.resourcePolicy, graceSeconds: 0 }, expectedVersion: 1 });
+  const roots = [];
+  const call = f.app.runner.call;
+  f.app.runner.call = async (b, action, fields) => {
+    if (action === 'job_get') roots.push(b.remoteProjectRoot);
+    if (action === 'job_get' && fields.jobId === broken.jobId) throw new AppError('WORKSPACE_CONFLICT');
+    return call(b, action, fields);
+  };
+  let r = await f.tick();
+  assert.ok(roots.every(root => root === '/workspaces/one'), 'per-job calls go to where the job was submitted');
+  assert.ok(await f.app.archive.read(moved.jobId), 'the moved job is still exported');
+  assert.equal(r.release.state, 'stopping'); assert.equal(r.release.exportStatus, 'PENDING');
+  await f.tick(); assert.equal((await f.tick()).release.state, 'stopped');
+  // An ambiguous submission blocks only while it may be in flight.
+  f.w.state = 'Available'; f.w.closing = null;
+  f.app.runner.call = async (b, action, fields) => { if (action === 'job_submit') throw new AppError('TRANSPORT_UNAVAILABLE'); if (action === 'job_get') throw new AppError('WORKSPACE_CONFLICT'); return call(b, action, fields); };
+  await f.app.submitJob(plan('lost'));
+  assert.ok((await f.tick()).release.blockers.some(b => b.kind === 'SUBMISSION_UNCONFIRMED'));
+  f.w.now += 61_000;
+  assert.ok(!(await f.tick()).release.blockers.some(b => b.kind === 'SUBMISSION_UNCONFIRMED'));
+  // A persistent GitHub failure (e.g. the instance was deleted elsewhere) stops counting as busy after a bounded run.
+  f.app.gh.get = async () => { throw new AppError('GITHUB_REQUEST_FAILED'); };
+  const busy = [];
+  for (let i = 0; i < 21; i++) busy.push(await f.controller.tick());
+  assert.equal(busy.slice(0, 19).every(Boolean), true); assert.equal(busy.at(-1), false);
+});

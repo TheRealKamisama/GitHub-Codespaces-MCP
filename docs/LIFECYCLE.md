@@ -21,10 +21,12 @@
 
 1. **对账**：发送后结果不明（`pending/unknown`）超过 60 秒的提交向远端查询；远端存在则记为 accepted，`JOB_NOT_FOUND` 则记为 `not_sent`（远端接受记录先于执行写入，所以不存在即未执行）。
 2. **导出**：本机提交的已 settled 任务导出到状态目录 `archive/<jobId>/`：最终状态、日志（最多 8 MiB，按 1 MiB 分页且不拆分 UTF-8 字符）与带 SHA-256 的回执。先写入临时目录再改名，崩溃不会留下半个归档。超过上限时回执标 `truncated`，完整日志仍在远端。
-3. **统计使用租约**：远端实例级注册表中所有项目、所有客户端未 settled 的任务；未过期的 hold；本机未确认的提交；5 分钟内的 prepare（避免“prepare 后提交前被停止”，显式 request 时忽略）；导出窗口内导出失败的任务。
+3. **统计使用租约**：远端实例级注册表中所有项目、所有客户端未 settled 的任务；未过期的 hold；60 秒内可能仍在发送的本机提交（之后真正运行的任务都在远端注册表中，无法对账的记录不会无限期阻止停止）；5 分钟内的 prepare（避免“prepare 后提交前被停止”，显式 request 时忽略）；导出窗口内导出失败的任务。
 4. **宽限**：无租约后进入 `grace`，期间出现新租约则重新开始；`graceSeconds: 0` 或 `codespace_release request` 跳过宽限。
 5. **关闭入口并停止**：在远端用实例锁原子地再次检查空闲并写入关闭标记（新任务返回 `CODESPACE_RELEASING`，对已有 requestId 的对账仍可用），然后调用 `POST /user/codespaces/{name}/stop`。
 6. **确认**：只有 GitHub 返回 `Shutdown` 后才记为 `stopped`、`computeRelease: RELEASED`；`storageRelease` 始终为 `RETAINED`（停止保留存储）。
+
+按任务调用（查询、导出、对账）发往该任务提交时的位置，即使绑定之后改了远端根目录。单个任务无法读取（非连接类错误）只会让它的导出记为 PENDING，不会阻止整台实例停止；同一实例连续约 5 分钟失败（例如实例已在别处删除）后，本控制进程不再把它算作待办并可退出，下一次相关工具调用会启动新的控制进程重试。
 
 失败处理：停止请求失败时先重新打开远端入口，再以指数退避加抖动重试；接受了但 120 秒内未生效也算一次失败；5 次后为 `action_required`，直到再次 `codespace_release request`。导出窗口内失败会阻止停止；窗口过后照常停止并标 `exportStatus: PENDING`，远端文件保留。实例被空闲超时或他人停止时记为 stopped。
 
