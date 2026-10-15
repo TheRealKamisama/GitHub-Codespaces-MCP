@@ -34,6 +34,7 @@
 | [environment-probe](../examples/jobs/environment-probe.json) | 查看实例实际提供的 CPU/内存/磁盘与工具链，缺失的工具报告为 not installed 而不失败 | sh | 容器中实际运行 |
 | [timeouts-and-optional-steps](../examples/jobs/timeouts-and-optional-steps.json) | 步骤级期限；optional 步骤超时不使任务失败；cleanup 总会运行 | sh | 容器中实际运行：slow-optional-check 为 timed_out，任务 succeeded |
 | [failure-is-reported-honestly](../examples/jobs/failure-is-reported-honestly.json) | 测试失败后后续步骤为 not_run，cleanup 仍运行，失败不被掩盖 | sh | 容器中实际运行：failed / STEP_FAILED，verification FAIL，cleanup PASS |
+| [artifact-build-and-download](../examples/jobs/artifact-build-and-download.json) | 构建确定性的输出并声明为产物：文件、目录、Unicode 名称、缺失的可选产物；cleanup 删除输出后仍从冻结副本下载并校验（见 [ARTIFACTS.md](ARTIFACTS.md)） | sh、python3、git | 容器中实际运行；端到端测试中下载内容与本地重新计算的字节一致 |
 | [docker-build-and-test](../examples/jobs/docker-build-and-test.json) | 用普通步骤构建镜像并在容器内测试；按 image ID 运行；按 job 标签清理容器 | docker | 仅 schema 校验 |
 | [docker-postgres-integration](../examples/jobs/docker-postgres-integration.json) | 一次性 Postgres 容器（daemon 管理、在进程组外）、就绪等待、集成测试，无论成功/失败/取消都按标签清理 | docker、python3、pytest | 仅 schema 校验 |
 | [node-ci](../examples/jobs/node-ci.json) | npm ci、可选 lint、测试；步骤级 `CI=true` | node、npm | 仅 schema 校验 |
@@ -58,7 +59,6 @@
 
 | 场景 | 缺少的功能 |
 |---|---|
-| 把测试报告、构建产物下载到本地 | 产物收集与 `artifact_download`（M1） |
 | 任务结束后自动导出结果并停止 Codespace | 本地回收控制进程、实例租约（M1） |
 | 长期运行的开发服务器，并转发到本机浏览器 | `service` 步骤与 `port_forward`（M2） |
 | 运行仓库中按名称定义的任务（`.codespace-mcp/project.json`） | 命名任务配置（M2） |

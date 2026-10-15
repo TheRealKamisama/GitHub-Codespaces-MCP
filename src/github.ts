@@ -38,6 +38,14 @@ export class Github {
     const r = await this.command(['api', '--hostname', 'github.com', '--method', 'POST', '-H', 'X-GitHub-Api-Version: 2022-11-28', endpoint]);
     requireThat(r.exitCode === 0, 'GITHUB_REQUEST_FAILED');
   }
+  // scp over the same authenticated tunnel as `gh codespace ssh`. Without --expand the remote path is literal:
+  // nothing in it is evaluated by a remote shell.
+  async copy(name: string, remotePath: string, localPath: string, recursive: boolean) {
+    const r = await this.run('gh', ['codespace', 'cp', '-c', name, ...(recursive ? ['-r'] : []), `remote:${remotePath}`, localPath],
+      { timeoutMs: 15 * 60_000, env: { ...this.env, GH_HOST: 'github.com', GH_PROMPT_DISABLED: '1', NO_COLOR: '1' } })
+      .catch(e => { throw e instanceof AppError && e.code === 'EXECUTABLE_UNAVAILABLE' ? new AppError('GH_NOT_FOUND') : e; });
+    requireThat(r.exitCode === 0, 'TRANSFER_FAILED');
+  }
   start(name: string) { return this.post(`user/codespaces/${encodeURIComponent(name)}/start`); }
   stop(name: string) { return this.post(`user/codespaces/${encodeURIComponent(name)}/stop`); }
   async get(name: string): Promise<Codespace> {

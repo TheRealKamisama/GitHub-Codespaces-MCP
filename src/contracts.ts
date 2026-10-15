@@ -67,9 +67,16 @@ export const revisionSource = z.strictObject({
   ref: z.string().max(211).regex(/^refs\/(heads|tags)\/[A-Za-z0-9._/-]{1,200}$/).refine(r => !r.includes('..') && !r.endsWith('/') && !r.endsWith('.lock'), 'Use a full branch or tag ref'),
   commit: z.string().regex(/^[a-f0-9]{40}$/),
 });
+// Declared outputs are frozen on the runner after the main steps (before cleanup) and downloaded by name.
+export const artifactSpec = z.strictObject({
+  name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/),
+  path: relativeDir.refine(p => p.split('/').some(s => s !== '' && s !== '.'), 'Name a file or directory inside the source, not the source root'),
+  required: z.boolean().default(true),
+});
 export const jobSubmitInput = z.strictObject({
   projectId, requestId, source: revisionSource,
   steps: z.array(stepSchema).min(1).max(32).refine(steps => new Set(steps.map(s => s.id)).size === steps.length, 'Step ids must be unique'),
+  artifacts: z.array(artifactSpec).max(32).refine(a => new Set(a.map(x => x.name)).size === a.length, 'Artifact names must be unique').default([]),
   timeoutSeconds: z.number().int().min(1).max(21600).default(3600), locale,
 }).refine(input => JSON.stringify(input).length <= 131072, 'Job plan exceeds 128 KiB');
 const outcome = z.enum(['PASS', 'FAIL', 'NOT_RUN', 'NOT_CONFIGURED']);
@@ -89,6 +96,13 @@ export const jobStatusSchema = z.strictObject({
     startedAt: z.number().nullable(), endedAt: z.number().nullable(),
   })),
   summary: z.strictObject({ execution: z.enum(['PASS', 'FAIL', 'NOT_RUN', 'INCOMPLETE']), verification: outcome, cleanup: outcome }),
+  // Absent in jobs and archives created before artifacts existed.
+  artifacts: z.array(z.strictObject({
+    name: z.string(), path: z.string(), required: z.boolean(), kind: z.enum(['file', 'directory']).nullable(),
+    state: z.enum(['pending', 'collected', 'missing', 'rejected', 'too_large', 'not_collected']),
+    size: z.number().int().nonnegative().nullable(), sha256: hex64.nullable(),
+    files: z.array(z.strictObject({ path: z.string(), size: z.number().int().nonnegative(), sha256: hex64 })), errorCode: z.string().nullable(),
+  })).default([]),
 });
 export type JobStatus = z.infer<typeof jobStatusSchema>;
 // Local locator: persisted before the remote call so a lost response is reconciled with the same requestId.
@@ -144,4 +158,11 @@ export const releaseOutputSchema = z.strictObject({
 export const archiveReceiptSchema = z.strictObject({
   schemaVersion: z.literal(1), jobId: hex64, digest: hex64, statusSha256: hex64, logSha256: hex64,
   logBytes: z.number().int().nonnegative(), remoteLogBytes: z.number().int().nonnegative(), truncated: z.boolean(), archivedAt: z.string(),
+  // Exported artifacts are verified against the manifest; skipped ones exceeded the export quota and stay remote.
+  artifactsExported: z.array(z.string()).default([]), artifactsSkipped: z.array(z.string()).default([]),
+});
+export const artifactDownloadInput = z.strictObject({ projectId, jobId, artifact: artifactSpec.shape.name, localDestination: z.string().min(1).max(4096), locale });
+export const artifactDownloadSchema = z.strictObject({
+  artifact: z.string(), kind: z.enum(['file', 'directory']), localPath: z.string(), size: z.number().int().nonnegative(),
+  sha256: hex64.nullable(), files: z.number().int().nonnegative(), source: z.enum(['archive', 'codespace']), verified: z.literal(true),
 });

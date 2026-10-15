@@ -114,7 +114,7 @@ test('cross-instance storage lock and invalid state fail closed; Windows rename 
   assert.deepEqual(await f.store.read('sample', 'a'), { version: 2 });
   await writeFile(f.store.path('sample', 'a'), '{broken');
   await assert.rejects(f.store.read('sample', 'a'), { code: 'STATE_INVALID' });
-  await writeFile(f.store.path('sample', 'a'), ' '.repeat(65537));
+  await writeFile(f.store.path('sample', 'a'), ' '.repeat(1024 * 1024 + 1));
   await assert.rejects(f.store.read('sample', 'a'), { code: 'STATE_INVALID' });
 });
 test('runner command carries dynamic paths only in stdin and verifies build identity', async () => {

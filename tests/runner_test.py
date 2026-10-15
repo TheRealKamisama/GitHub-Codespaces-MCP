@@ -95,6 +95,53 @@ class PortableTests(unittest.TestCase):
             self.assertEqual(bootstrap.platform_environment({}, str(Path(temporary) / 'missing')), {})
         self.assertNotIn('GITHUB_CODESPACE_TOKEN', runner.without_tokens({'GITHUB_CODESPACE_TOKEN': 'x', 'KEEP': '1'}))
 
+    def test_artifacts_are_frozen_with_checksums_and_links_are_never_followed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            work, store, outside = Path(temporary) / 'src', Path(temporary) / 'store', Path(temporary) / 'outside.txt'
+            (work / 'dist' / 'report' / 'deep').mkdir(parents=True)
+            outside.write_text('secret')
+            (work / 'dist' / 'app.bin').write_bytes(b'\x00\x01' * 1000)
+            (work / 'dist' / 'report' / 'summary.json').write_text('{}')
+            (work / 'dist' / 'report' / 'deep' / '报告 notes.txt').write_text('中文')
+            (work / 'dist' / 'leak').symlink_to(outside)
+            (work / 'linked').mkdir(); (work / 'linked' / 'ok.txt').write_text('x'); (work / 'linked' / 'bad').symlink_to(outside)
+            (work / 'linkdir').symlink_to(work / 'dist', target_is_directory=True)
+            specs = [{'name': 'app', 'path': 'dist/app.bin'}, {'name': 'report', 'path': 'dist/report/'},
+                     {'name': 'leak', 'path': 'dist/leak'}, {'name': 'mixed', 'path': 'linked'}, {'name': 'via-link', 'path': 'linkdir/app.bin'},
+                     {'name': 'coverage', 'path': 'coverage/lcov.info', 'required': False}]
+            entries = {e['name']: e for e in runner.collect_artifacts(work, specs, store)}
+            self.assertEqual({n: (e['state'], e['errorCode']) for n, e in entries.items()}, {
+                'app': ('collected', None), 'report': ('collected', None), 'leak': ('rejected', 'ARTIFACT_PATH_INVALID'),
+                'mixed': ('rejected', 'ARTIFACT_PATH_INVALID'), 'via-link': ('rejected', 'ARTIFACT_PATH_INVALID'), 'coverage': ('missing', 'ARTIFACT_MISSING')})
+            self.assertEqual(entries['app']['sha256'], hashlib.sha256(b'\x00\x01' * 1000).hexdigest())
+            self.assertEqual([(f['path'], f['size']) for f in entries['report']['files']], [('deep/报告 notes.txt', 6), ('summary.json', 2)])
+            self.assertEqual(entries['report']['size'], 8)
+            self.assertEqual(sorted(p.name for p in store.iterdir()), ['app', 'report'], 'nothing rejected reaches the store')
+            # The frozen copy is independent of the workspace and read-only.
+            (work / 'dist' / 'app.bin').write_bytes(b'changed')
+            self.assertEqual(hashlib.sha256((store / 'app').read_bytes()).hexdigest(), entries['app']['sha256'])
+            self.assertFalse(os.access(store / 'app', os.W_OK) and os.geteuid() != 0)
+            # Quotas reject whole artifacts instead of truncating them.
+            limited = runner.collect_artifacts(work, [{'name': 'app', 'path': 'dist/app.bin'}], Path(temporary) / 'small', limit=5)
+            self.assertEqual((limited[0]['state'], limited[0]['errorCode'], limited[0]['size']), ('too_large', 'ARTIFACT_TOO_LARGE', 7))
+            self.assertEqual(list((Path(temporary) / 'small').iterdir()), [])
+            counted = runner.collect_artifacts(work, [{'name': 'report', 'path': 'dist/report'}], Path(temporary) / 'few', file_limit=1)
+            self.assertEqual(counted[0]['state'], 'too_large')
+            if hasattr(os, 'mkfifo'):
+                os.mkfifo(work / 'dist' / 'pipe')
+                self.assertEqual(runner.collect_artifacts(work, [{'name': 'pipe', 'path': 'dist/pipe'}], Path(temporary) / 'fifo')[0]['state'], 'rejected')
+
+    def test_artifact_declarations_are_validated(self):
+        job = {'schemaVersion': 1, 'jobId': 'a' * 64, 'digest': 'b' * 64, 'projectId': 'p', 'timeoutSeconds': 60,
+               'source': {'mode': 'revision', 'repository': 'o/r', 'ref': 'refs/heads/main', 'commit': 'c' * 40},
+               'steps': [{'id': 'one', 'role': 'build', 'kind': 'command', 'argv': ['true']}]}
+        binding = {'projectId': 'p', 'repository': 'o/r'}
+        runner.validate_job({**job, 'artifacts': [{'name': 'a', 'path': 'dist/a', 'required': False}]}, binding)
+        for bad in ([{'name': '../x', 'path': 'a'}], [{'name': 'a', 'path': '../a'}], [{'name': 'a', 'path': '/etc/passwd'}], [{'name': 'a', 'path': ''}],
+                    [{'name': 'a', 'path': 'x'}, {'name': 'a', 'path': 'y'}], [{'name': 'a', 'path': 'x', 'mode': 'follow'}]):
+            with self.assertRaisesRegex(ValueError, 'CONFIG_INVALID'):
+                runner.validate_job({**job, 'artifacts': bad}, binding)
+
 
 @unittest.skipUnless(sys.platform == 'linux' and Path('/workspaces').is_dir() and os.access('/workspaces', os.W_OK), 'NOT RUN: Linux with writable /workspaces required')
 class LinuxIntegration(unittest.TestCase):
@@ -218,12 +265,13 @@ class LinuxJobs(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         return json.loads(completed.stdout)
 
-    def job(self, steps, commit=None, ref='refs/heads/main', timeout=60, **extra):
+    def job(self, steps, commit=None, ref='refs/heads/main', timeout=60, artifacts=None, **extra):
         self.counter += 1
         return {'schemaVersion': 1, 'jobId': hashlib.sha256(f'job-{self.counter}'.encode()).hexdigest(),
                 'digest': hashlib.sha256(json.dumps(steps).encode()).hexdigest(), 'projectId': 'test', 'requestId': f'r{self.counter}',
                 'timeoutSeconds': timeout, 'source': {'mode': 'revision', 'repository': 'fixture/repo', 'ref': ref, 'commit': commit or self.base},
-                'steps': [{'cwd': '.', 'env': {}, 'optional': False, 'kind': 'command', **s} for s in steps], **extra}
+                'steps': [{'cwd': '.', 'env': {}, 'optional': False, 'kind': 'command', **s} for s in steps],
+                **({'artifacts': artifacts} if artifacts else {}), **extra}
 
     def settle(self, job_id, limit=60):
         deadline = time.time() + limit
@@ -355,13 +403,14 @@ class LinuxJobs(unittest.TestCase):
         self.assertGreaterEqual(len(runnable), 5)
         for example in runnable:
             with self.subTest(example=example['name']):
-                job = self.job(example['plan']['steps'], timeout=example['plan']['timeoutSeconds'])
+                job = self.job(example['plan']['steps'], timeout=example['plan']['timeoutSeconds'], artifacts=example['plan'].get('artifacts'))
                 self.assertTrue(self.call('job_submit', job=job)['ok'])
                 data = self.settle(job['jobId'], limit=120)
                 expect = example['expect']
                 self.assertEqual(data['state'], expect['state'], self.logs(job['jobId'], 65536)[0])
                 self.assertEqual(data['summary'], expect['summary'])
                 self.assertEqual(data['errorCode'], expect.get('errorCode'))
+                self.assertEqual({a['name']: a['state'] for a in data['artifacts']}, expect.get('artifacts', {}))
                 for step_id, state in expect.get('steps', {}).items():
                     self.assertEqual(next(s['state'] for s in data['steps'] if s['id'] == step_id), state, step_id)
                 self.assertTrue(self.logs(job['jobId'], 65536)[1]['complete'])
@@ -395,6 +444,27 @@ class LinuxJobs(unittest.TestCase):
         self.assertIsNone(self.call('instance_reopen', closeId=close_id)['data']['closing'])
         self.assertTrue(self.call('job_submit', job=fresh)['ok'])
         self.settle(fresh['jobId'])
+
+    def test_required_artifact_problems_fail_the_job_but_keep_what_was_collected(self):
+        outside = self.root / 'outside.txt'; outside.write_text('secret')
+        job = self.job([{'id': 'build', 'role': 'build', 'kind': 'shell', 'shell': 'sh',
+                         'script': f'mkdir -p dist && echo report > dist/report.txt && ln -s {outside} dist/leak\n'},
+                        {'id': 'tidy', 'role': 'cleanup', 'argv': ['rm', '-rf', 'dist']}],
+                       artifacts=[{'name': 'report', 'path': 'dist/report.txt'}, {'name': 'leak', 'path': 'dist/leak', 'required': False},
+                                  {'name': 'binary', 'path': 'dist/app.bin'}])
+        self.assertTrue(self.call('job_submit', job=job)['ok'])
+        data = self.settle(job['jobId'])
+        self.assertEqual((data['state'], data['errorCode'], data['summary']['execution']), ('failed', 'ARTIFACT_MISSING', 'PASS'))
+        self.assertEqual({a['name']: (a['state'], a['errorCode']) for a in data['artifacts']},
+                         {'report': ('collected', None), 'leak': ('rejected', 'ARTIFACT_PATH_INVALID'), 'binary': ('missing', 'ARTIFACT_MISSING')})
+        frozen = Path(self.binding['remoteProjectRoot']) / '.codespace-mcp' / 'jobs' / job['jobId'] / 'artifacts'
+        self.assertEqual(sorted(p.name for p in frozen.iterdir()), ['report'])
+        self.assertEqual((frozen / 'report').read_text(), 'report\n', 'frozen before the cleanup step removed dist/')
+        self.assertEqual(data['steps'][1]['state'], 'passed')
+        # Jobs that never reached collection report not_collected, never missing.
+        unreachable = self.job([{'id': 'x', 'role': 'build', 'argv': ['true']}], commit='0' * 40, artifacts=[{'name': 'a', 'path': 'a'}])
+        self.assertTrue(self.call('job_submit', job=unreachable)['ok'])
+        self.assertEqual(self.settle(unreachable['jobId'])['artifacts'][0]['state'], 'not_collected')
 
     def test_lost_supervisor_is_interrupted_not_rerun(self):
         job = self.job([{'id': 'long', 'role': 'test', 'argv': ['sh', '-c', 'sleep 3003', 'm1-marker-lost']}])

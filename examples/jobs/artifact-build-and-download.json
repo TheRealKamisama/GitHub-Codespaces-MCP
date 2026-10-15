@@ -1,0 +1,94 @@
+{
+  "title": "Build outputs collected as artifacts and downloaded with verified checksums",
+  "demonstrates": [
+    "declared artifacts frozen after the main steps, before cleanup",
+    "files, a directory and a Unicode file name",
+    "a missing optional artifact is reported, not a failure",
+    "artifact_download verifies size and SHA-256 before placing the file",
+    "with a dedicated binding, artifacts are exported before the automatic stop and downloadable offline"
+  ],
+  "requires": [
+    "sh",
+    "python3",
+    "git"
+  ],
+  "checkedIn": "linux-container",
+  "expect": {
+    "state": "succeeded",
+    "summary": {
+      "execution": "PASS",
+      "verification": "PASS",
+      "cleanup": "PASS"
+    },
+    "artifacts": {
+      "package": "collected",
+      "blob": "collected",
+      "build-report": "collected",
+      "notes": "collected",
+      "junit": "collected",
+      "coverage": "missing"
+    }
+  },
+  "plan": {
+    "timeoutSeconds": 600,
+    "steps": [
+      {
+        "id": "build",
+        "role": "build",
+        "kind": "shell",
+        "shell": "sh",
+        "script": "set -e\nmkdir -p dist/report reports\ngit archive --format=tar -o dist/app.tar HEAD\npython3 - <<'PY'\nimport hashlib, json, subprocess\n# Deterministic 5 MiB: the downloaded bytes can be recomputed locally and compared exactly.\nwith open('dist/blob.bin', 'wb') as out:\n    for i in range(163840):\n        out.write(hashlib.sha256(b'blob-%d' % i).digest())\ncommit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()\nfiles = subprocess.check_output(['git', 'ls-files'], text=True).splitlines()\nwith open('dist/app.tar', 'rb') as package:\n    digest = hashlib.sha256(package.read()).hexdigest()\nwith open('dist/report/summary.json', 'w') as out:\n    json.dump({'commit': commit, 'files': len(files), 'tarSha256': digest}, out, indent=2)\nwith open('dist/report/files.txt', 'w') as out:\n    out.write('\\n'.join(files) + '\\n')\nwith open('dist/报告 notes.txt', 'w', encoding='utf-8') as out:\n    out.write('构建于 ' + commit + '\\n')\nprint('built', commit)\nPY\n"
+      },
+      {
+        "id": "check",
+        "role": "test",
+        "kind": "shell",
+        "shell": "sh",
+        "script": "python3 - <<'PY'\nimport hashlib, json\nsummary = json.load(open('dist/report/summary.json'))\nassert summary['tarSha256'] == hashlib.sha256(open('dist/app.tar', 'rb').read()).hexdigest(), 'summary does not match package'\nwith open('reports/junit.xml', 'w') as out:\n    out.write('<testsuite name=\"artifact-demo\" tests=\"1\" failures=\"0\"><testcase name=\"summary-matches-package\"/></testsuite>\\n')\nprint('summary matches package')\nPY\n"
+      },
+      {
+        "id": "tidy",
+        "role": "cleanup",
+        "kind": "command",
+        "argv": [
+          "rm",
+          "-rf",
+          "dist",
+          "reports"
+        ]
+      }
+    ],
+    "artifacts": [
+      {
+        "name": "package",
+        "path": "dist/app.tar",
+        "required": true
+      },
+      {
+        "name": "blob",
+        "path": "dist/blob.bin",
+        "required": true
+      },
+      {
+        "name": "build-report",
+        "path": "dist/report",
+        "required": true
+      },
+      {
+        "name": "notes",
+        "path": "dist/报告 notes.txt",
+        "required": false
+      },
+      {
+        "name": "junit",
+        "path": "reports/junit.xml",
+        "required": true
+      },
+      {
+        "name": "coverage",
+        "path": "coverage/lcov.info",
+        "required": false
+      }
+    ]
+  }
+}

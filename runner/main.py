@@ -23,6 +23,9 @@ CLEANUP_DEFAULT_SECONDS = 300
 GIT_TIMEOUT_SECONDS = 600
 HEX64 = re.compile('[a-f0-9]{64}')
 HEX32 = re.compile('[a-f0-9]{32}')
+NAME = re.compile('[A-Za-z0-9][A-Za-z0-9_.-]{0,63}')
+ARTIFACT_LIMIT = 256 * 1024 * 1024
+ARTIFACT_FILE_LIMIT = 1000
 CLOSE_TTL_SECONDS = 600
 MAX_HOLD_SECONDS = 14400
 LOG_PAGE_LIMIT = 1048576
@@ -143,6 +146,89 @@ def safe_relative(raw):
     return parts
 
 
+def copy_frozen(source, destination):
+    """Copy one regular file without following a final symlink; returns the SHA-256 of the bytes written."""
+    digest = hashlib.sha256()
+    descriptor = os.open(source, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))
+    try:
+        with os.fdopen(descriptor, 'rb') as reader, open(destination, 'xb') as writer:
+            descriptor = None
+            for chunk in iter(lambda: reader.read(1024 * 1024), b''):
+                digest.update(chunk)
+                writer.write(chunk)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    os.chmod(destination, 0o444)
+    return digest.hexdigest()
+
+
+def collect_artifacts(workdir, specs, store, limit=ARTIFACT_LIMIT, file_limit=ARTIFACT_FILE_LIMIT):
+    """Freeze declared outputs into the job's store, so later steps or jobs cannot change what is downloaded.
+
+    A link anywhere on an artifact's path, or inside a directory artifact, is rejected and never followed: it could
+    point outside the checked-out source. Quotas reject an artifact rather than truncate it.
+    """
+    workdir, store = Path(workdir), Path(store)
+    store.mkdir(exist_ok=True)
+    entries, used, files_used = [], 0, 0
+    for spec in specs:
+        entry = {'name': spec['name'], 'path': spec['path'], 'required': spec.get('required', True), 'kind': None,
+                 'state': 'missing', 'size': None, 'sha256': None, 'files': [], 'errorCode': 'ARTIFACT_MISSING'}
+        entries.append(entry)
+        parts = safe_relative(spec['path'])
+        source, linked = workdir, False
+        for part in parts:
+            source = source / part
+            linked = linked or source.is_symlink()
+        if linked:
+            entry.update(state='rejected', errorCode='ARTIFACT_PATH_INVALID')
+            continue
+        if not source.exists():
+            continue
+        destination = store / spec['name']
+        try:
+            if source.is_file():
+                size = source.stat().st_size
+                if used + size > limit:
+                    entry.update(state='too_large', errorCode='ARTIFACT_TOO_LARGE', size=size)
+                    continue
+                entry.update(kind='file', state='collected', size=size, sha256=copy_frozen(source, destination), errorCode=None)
+                used += size
+            elif source.is_dir():
+                members, invalid = [], False
+                for root, directories, files in os.walk(source, followlinks=False):
+                    for name in directories + files:
+                        member = Path(root) / name
+                        if member.is_symlink() or (name in files and not member.is_file()):
+                            invalid = True
+                    members.extend(Path(root) / name for name in files)
+                if invalid:
+                    entry.update(state='rejected', errorCode='ARTIFACT_PATH_INVALID')
+                    continue
+                total = sum(m.stat().st_size for m in members)
+                if used + total > limit or files_used + len(members) > file_limit:
+                    entry.update(state='too_large', errorCode='ARTIFACT_TOO_LARGE', size=total)
+                    continue
+                listed = []
+                for member in sorted(members):
+                    relative = member.relative_to(source)
+                    target = destination.joinpath(*relative.parts)
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    listed.append({'path': relative.as_posix(), 'size': member.stat().st_size, 'sha256': copy_frozen(member, target)})
+                destination.mkdir(exist_ok=True)
+                entry.update(kind='directory', state='collected', size=total, files=listed, errorCode=None)
+                used += total
+                files_used += len(members)
+            else:
+                entry.update(state='rejected', errorCode='ARTIFACT_PATH_INVALID')
+        except OSError:
+            # A partial copy is never presented as collected.
+            shutil.rmtree(destination, ignore_errors=True) if destination.is_dir() else destination.unlink(missing_ok=True)
+            entry.update(kind=None, state='rejected', size=None, sha256=None, files=[], errorCode='ARTIFACT_COPY_FAILED')
+    return entries
+
+
 def require_value(condition):
     if not condition:
         raise ValueError('CONFIG_INVALID')
@@ -185,6 +271,15 @@ def validate_job(job, binding):
         timeout = step.get('timeoutSeconds')
         require_value(timeout is None or (isinstance(timeout, int) and 1 <= timeout <= 21600))
         require_value(isinstance(step.get('optional', False), bool))
+    artifacts = job.get('artifacts', [])
+    require_value(isinstance(artifacts, list) and len(artifacts) <= 32)
+    names = set()
+    for artifact in artifacts:
+        require_value(isinstance(artifact, dict) and set(artifact) <= {'name', 'path', 'required'})
+        require_value(NAME.fullmatch(str(artifact.get('name', ''))) and artifact['name'] not in names)
+        names.add(artifact['name'])
+        require_value(safe_relative(artifact.get('path')))
+        require_value(isinstance(artifact.get('required', True), bool))
 
 
 class Instance:
@@ -334,7 +429,7 @@ class Jobs:
                 'settled': settled, 'observation': observation, 'errorCode': status['errorCode'], 'cancelRequested': cancel_requested,
                 'generation': status['generation'], 'acceptedAt': status['acceptedAt'], 'startedAt': status['startedAt'],
                 'endedAt': status['endedAt'], 'updatedAt': status['updatedAt'], 'source': status['source'], 'steps': steps,
-                'summary': summary}
+                'summary': summary, 'artifacts': status.get('artifacts', [])}
 
     def submit(self, job, binding, instance):
         validate_job(job, binding)
@@ -359,7 +454,9 @@ class Jobs:
                       'acceptedAt': now, 'startedAt': None, 'endedAt': None, 'updatedAt': now,
                       'source': {'mode': 'revision', 'repository': source['repository'], 'ref': source['ref'],
                                  'requestedCommit': source['commit'], 'resolvedCommit': None, 'sourceModified': None, 'workdir': None},
-                      'steps': steps, 'summary': summarize(steps, 'pending')}
+                      'steps': steps, 'summary': summarize(steps, 'pending'),
+                      'artifacts': [{'name': a['name'], 'path': a['path'], 'required': a.get('required', True), 'kind': None, 'state': 'pending',
+                                     'size': None, 'sha256': None, 'files': [], 'errorCode': None} for a in job.get('artifacts', [])]}
             # Persist before spawning: an ambiguous crash is reported, never resolved by starting a duplicate.
             atomic(directory / 'status.json', status)
             # The supervisor keeps git credentials for fetch; step processes receive a token-free environment.
@@ -648,6 +745,12 @@ class Supervisor:
                 failure = 'timed_out'
             elif reason != 'cancelled' and state != 'passed' and not step.get('optional', False):
                 failure = 'failed'
+        # Outputs are frozen before cleanup steps, which commonly delete them; failing runs keep their reports.
+        if self.request.get('artifacts'):
+            entries = collect_artifacts(workdir, self.request['artifacts'], self.directory / 'artifacts')
+            with self.lock:
+                self.status['artifacts'] = entries
+            self.note('==> artifacts: ' + ', '.join(f'{a["name"]} {a["state"]}' for a in entries))
         # Cleanup runs after success, failure, timeout and cancellation, with its own bounded deadline.
         for index, step in enumerate(self.request['steps']):
             if step['role'] == 'cleanup':
@@ -664,6 +767,9 @@ class Supervisor:
             return self.finish('timed_out', 'JOB_TIMED_OUT')
         if failure == 'failed':
             return self.finish('failed', 'STEP_FAILED')
+        problem = next((a for a in self.status['artifacts'] if a['required'] and a['state'] != 'collected'), None)
+        if problem is not None:
+            return self.finish('failed', problem['errorCode'] or 'ARTIFACT_MISSING')
         if any(s['state'] != 'passed' for s in self.status['steps'] if s['role'] == 'cleanup'):
             return self.finish('failed', 'CLEANUP_FAILED')
         return self.finish('succeeded', None)
@@ -673,6 +779,9 @@ class Supervisor:
             for entry in self.status['steps']:
                 if entry['state'] in ('pending', 'running'):
                     entry['state'] = 'not_run'
+            for artifact in self.status.setdefault('artifacts', []):
+                if artifact['state'] == 'pending':
+                    artifact.update(state='not_collected', errorCode=None)
             summary = summarize(self.status['steps'], phase_error)
         self.note(f'==> job {state}' + (f' {error}' if error else ''))
         self.write(state=state, errorCode=error, endedAt=time.time(), settled=True, summary=summary)
