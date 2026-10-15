@@ -1,12 +1,13 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { appendFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AppError } from './errors.js';
 import { bindingSchema, instanceStatusSchema, jobRecordSchema, jobStatusSchema, jobLogsSchema, operationSchema, type Binding, type JobRecord, type ReleaseRecord } from './contracts.js';
 import { Application, codeOf, releasePolicy } from './application.js';
 import { ARCHIVE_LOG_LIMIT } from './archive.js';
+import { discard, transferPath, verifyArtifact } from './artifacts.js';
 
 export const PREPARE_LEASE_MS = 5 * 60_000;
 const RECONCILE_AFTER_MS = 60_000;
@@ -18,6 +19,8 @@ const MAX_CONSECUTIVE_FAILURES = 20;
 // The instance (or GitHub) could not be reached: nothing can be concluded about any job, so the round is retried.
 const UNREACHABLE = ['TRANSPORT_UNAVAILABLE', 'PROCESS_TIMEOUT', 'PROCESS_CLEANUP_UNCONFIRMED', 'GITHUB_REQUEST_FAILED', 'OUTPUT_LIMIT', 'GH_NOT_FOUND', 'AUTH_REQUIRED'];
 const LOG_PAGE_BYTES = 1024 * 1024;
+// Artifacts exported before a stop, per job. Larger ones stay on the instance (storage is retained when stopped).
+export const EXPORT_ARTIFACT_LIMIT = 64 * 1024 * 1024;
 const TRANSITIONAL = ['Queued', 'Provisioning', 'Awaiting', 'Created', 'Starting', 'Updating', 'Rebuilding', 'ShuttingDown'];
 type Blocker = ReleaseRecord['blockers'][number];
 
@@ -201,7 +204,9 @@ export class Controller {
       }
       try {
         const { log, remoteBytes } = await this.fetchLog(binding, job.jobId);
-        await this.app.archive.write(status, log, remoteBytes);
+        const artifacts = await this.exportArtifacts(binding, status);
+        try { await this.app.archive.write(status, log, remoteBytes, artifacts); }
+        finally { if (artifacts) await discard(artifacts.dir); }
         result.archived++;
         this.log(`${name}: archived ${job.jobId.slice(0, 12)} (${status.state})`);
       } catch (e) {
@@ -212,6 +217,32 @@ export class Controller {
       }
     }
     return result;
+  }
+
+  // Required artifacts first, within the export quota; every copy is verified against the frozen manifest.
+  private async exportArtifacts(binding: Binding, status: ReturnType<typeof jobStatusSchema.parse>) {
+    const collected = status.artifacts.filter(a => a.state === 'collected').sort((a, b) => Number(b.required) - Number(a.required));
+    if (collected.length === 0) return null;
+    // Jobs from runners without a transfer alias can never be copied: archive their status and log, skip artifacts.
+    try { transferPath(status, collected[0]!.name); }
+    catch {
+      await mkdir(this.app.archive.root, { recursive: true });
+      return { dir: await mkdtemp(join(this.app.archive.root, '.staging-')), exported: [], skipped: collected.map(a => a.name) };
+    }
+    const dir = join(this.app.archive.root, `.staging-${randomBytes(8).toString('hex')}`);
+    await mkdir(dir, { recursive: true });
+    const exported: string[] = [], skipped: string[] = [];
+    let budget = EXPORT_ARTIFACT_LIMIT;
+    try {
+      for (const entry of collected) {
+        if ((entry.size ?? 0) > budget) { skipped.push(entry.name); continue; }
+        const target = join(dir, entry.name);
+        await this.app.gh.copy(binding.codespaceName, transferPath(status, entry.name), target, entry.kind === 'directory');
+        await verifyArtifact(target, entry);
+        exported.push(entry.name); budget -= entry.size ?? 0;
+      }
+    } catch (e) { await discard(dir); throw e; }
+    return { dir, exported, skipped };
   }
 
   private async fetchLog(binding: Binding, jobId: string) {

@@ -39,6 +39,11 @@ else if (args[0] === 'auth') out({ hosts: { 'github.com': [{ active: true, state
 else if (args.at(-1) === 'user') out({ login: 'fixture' });
 else if (args[0] === 'api' && args.includes('POST')) { fs.appendFileSync(stateFile + '.posts', args.at(-1) + '\\n'); fs.writeFileSync(stateFile, args.at(-1).endsWith('/stop') ? 'Shutdown' : 'Available'); }
 else if (args[0] === 'api') out({ name: 'fixture-space', state: state(), repository: { full_name: 'fixture/repo' }, owner: { login: 'fixture' } });
+else if (args[0] === 'codespace' && args[1] === 'cp') {
+  // Like scp: copy the literal remote path (this "remote" is the local file system) to the local destination.
+  const [source, destination] = args.slice(-2);
+  fs.cpSync(source.replace(/^remote:/, ''), destination, { recursive: args.includes('-r'), dereference: true, errorOnExist: true, force: false });
+}
 else if (args[0] === 'codespace' && args[1] === 'ssh') {
   const r = require('node:child_process').spawnSync('sh', ['-c', args.at(-1)], { input: fs.readFileSync(0), maxBuffer: 64 * 1024 * 1024, env: { ...process.env, CODESPACE_NAME: 'fixture-space' } });
   // process.exit() would drop unflushed pipe output for large responses; let the stream drain instead.
@@ -55,7 +60,7 @@ else if (args[0] === 'codespace' && args[1] === 'ssh') {
   const projectId = 'dev/e2e';
   const extra = ownership === 'dedicated' ? { ownership, preparePolicy: 'start_existing', resourcePolicy: { releaseMode: 'stop_after_export', graceSeconds: 0, exportTimeoutSeconds: 120 } } : { ownership, preparePolicy: 'reuse_only' };
   await app.bind({ projectId, expectedAccount: 'fixture', repository: 'fixture/repo', codespaceName: 'fixture-space', remoteProjectRoot: resolve(root, 'project'), githubHost: 'github.com', ...extra });
-  return { root, app, projectId, commit, posts: async () => (await readFile(join(root, 'instance-state.posts'), 'utf8').catch(() => '')).trim().split('\n').filter(Boolean) };
+  return { root, app, projectId, commit, work, posts: async () => (await readFile(join(root, 'instance-state.posts'), 'utf8').catch(() => '')).trim().split('\n').filter(Boolean) };
 }
 async function settled(app, projectId, jobId) {
   let status;
@@ -107,4 +112,41 @@ test('Linux end-to-end: dedicated instance is exported, closed and stopped by th
   // Intake stayed closed after the release: a late submission is refused rather than racing the stop.
   const late = await app.submitJob({ projectId, requestId: 'late', source: { ref: 'refs/heads/main', commit }, steps: [{ id: 'x', role: 'build', kind: 'command', argv: ['true'] }] });
   assert.equal(late.submission, 'not_sent'); assert.equal(late.errorCode, 'CODESPACE_NOT_READY');
+});
+
+test('Linux end-to-end: the artifact demo is built, frozen, downloaded with verified bytes, exported before stop and downloaded offline', { skip }, async t => {
+  const { root, app, projectId, commit, work, posts } = await fixture(t, 'dedicated');
+  const example = JSON.parse(await readFile('examples/jobs/artifact-build-and-download.json', 'utf8'));
+  const record = await app.submitJob({ projectId, requestId: 'artifact-demo', source: { ref: 'refs/heads/main', commit }, ...example.plan });
+  assert.equal(record.submission, 'accepted', record.errorCode ?? '');
+  const status = await settled(app, projectId, record.jobId);
+  assert.equal(status.state, 'succeeded', JSON.stringify(status.artifacts));
+  assert.deepEqual(Object.fromEntries(status.artifacts.map(a => [a.name, a.state])), example.expect.artifacts);
+  // Expected bytes, recomputed locally rather than trusted from the runner.
+  const expectedTar = execFileSync('git', ['archive', '--format=tar', commit], { cwd: work });
+  const blob = Buffer.concat(Array.from({ length: 163840 }, (_, i) => createHash('sha256').update(`blob-${i}`).digest()));
+  const out = join(root, 'downloads');
+  await mkdir(out);
+  const fetched = {};
+  for (const name of ['package', 'blob', 'build-report', 'notes', 'junit']) {
+    fetched[name] = await app.downloadArtifact({ projectId, jobId: record.jobId, artifact: name, localDestination: join(out, `live-${name}`) });
+    assert.equal(fetched[name].source, 'codespace');
+  }
+  assert.ok((await readFile(join(out, 'live-package'))).equals(expectedTar), 'package equals a local git archive of the same commit');
+  assert.ok((await readFile(join(out, 'live-blob'))).equals(blob), 'blob equals the locally recomputed bytes');
+  assert.equal(JSON.parse(await readFile(join(out, 'live-build-report', 'summary.json'), 'utf8')).tarSha256, createHash('sha256').update(expectedTar).digest('hex'));
+  assert.equal(await readFile(join(out, 'live-notes'), 'utf8'), `构建于 ${commit}\n`);
+  assert.match(await readFile(join(out, 'live-junit'), 'utf8'), /failures="0"/);
+  // The controller exports the artifacts with the job, then stops the instance; downloads keep working offline.
+  const controller = new Controller(app);
+  let release;
+  for (let i = 0; i < 6 && release?.state !== 'stopped'; i++) { await controller.tick(); release = (await app.release({ projectId, action: 'status' })).release; }
+  assert.deepEqual([release.state, release.exportStatus], ['stopped', 'COMPLETE']);
+  assert.deepEqual((await app.archive.read(record.jobId)).receipt.artifactsExported.sort(), ['blob', 'build-report', 'junit', 'notes', 'package']);
+  assert.deepEqual(await posts(), ['user/codespaces/fixture-space/stop']);
+  const offline = await app.downloadArtifact({ projectId, jobId: record.jobId, artifact: 'blob', localDestination: join(out, 'offline-blob') });
+  assert.equal(offline.source, 'archive');
+  assert.ok((await readFile(join(out, 'offline-blob'))).equals(blob));
+  const report = await app.downloadArtifact({ projectId, jobId: record.jobId, artifact: 'build-report', localDestination: join(out, 'offline-report') });
+  assert.deepEqual([report.source, report.files], ['archive', 2]);
 });

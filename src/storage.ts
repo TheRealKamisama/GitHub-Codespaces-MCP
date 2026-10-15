@@ -9,7 +9,8 @@ export class Store {
   async read(kind: string, id: string): Promise<unknown | undefined> {
     try {
       const path = this.path(kind, id);
-      if ((await stat(path)).size > 65536) throw new AppError('STATE_INVALID');
+      // Bounded read: a job record can carry an artifact manifest of up to 1000 files.
+      if ((await stat(path)).size > 1024 * 1024) throw new AppError('STATE_INVALID');
       return JSON.parse(await readFile(path, 'utf8'));
     }
     catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw new AppError('STATE_INVALID'); }

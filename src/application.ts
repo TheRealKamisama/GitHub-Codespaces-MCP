@@ -1,10 +1,12 @@
 import { z } from 'zod';
 import { AppError, requireThat } from './errors.js';
-import { join } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
+import { copyFile, cp, lstat } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
-import { bindingSchema, bindingInput, prepareInput, operationSchema, handshakeSchema, jobSubmitInput, jobRecordSchema, jobStatusSchema, jobGetInput, jobLogsInput, jobLogsSchema, jobRef, inspectInput, releaseInput, releaseRecordSchema, instanceStatusSchema, type Binding, type Operation, type JobRecord, type JobStatus, type ReleaseRecord } from './contracts.js';
+import { bindingSchema, bindingInput, prepareInput, operationSchema, handshakeSchema, jobSubmitInput, jobRecordSchema, jobStatusSchema, jobGetInput, jobLogsInput, jobLogsSchema, jobRef, inspectInput, artifactDownloadInput, releaseInput, releaseRecordSchema, instanceStatusSchema, type Binding, type Operation, type JobRecord, type JobStatus, type ReleaseRecord } from './contracts.js';
 import { Github } from './github.js';
 import { Archive } from './archive.js';
+import { discard, placeArtifact, transferPath, verifyArtifact } from './artifacts.js';
 import { LocalGit } from './git.js';
 import { Store, digest } from './storage.js';
 import type { RunnerPort } from './transport/runner.js';
@@ -179,7 +181,9 @@ export class Application {
       // Idempotency scope: account, repository, project and requestId. The plan digest excludes presentation locale.
       const jobId = digest([binding.expectedAccount.toLowerCase(), binding.repository.toLowerCase(), input.projectId, input.requestId]);
       const planDigest = digest({ projectId: input.projectId, repository: binding.repository.toLowerCase(), codespaceName: binding.codespaceName,
-        remoteProjectRoot: binding.remoteProjectRoot, source: input.source, steps: input.steps, timeoutSeconds: input.timeoutSeconds });
+        remoteProjectRoot: binding.remoteProjectRoot, source: input.source, steps: input.steps, timeoutSeconds: input.timeoutSeconds,
+        // Only present when declared, so plans submitted before artifacts existed keep their digest.
+        ...(input.artifacts.length ? { artifacts: input.artifacts } : {}) });
       const old = await this.jobRecord(jobId);
       requireThat(!old || old.digest === planDigest, 'IDEMPOTENCY_CONFLICT');
       if (!old || old.submission === 'not_sent') {
@@ -195,7 +199,7 @@ export class Application {
       await this.available(binding);
       sent = true;
       const job = { schemaVersion: 1, jobId, digest: planDigest, projectId: input.projectId, requestId: input.requestId, timeoutSeconds: input.timeoutSeconds,
-        source: { ...input.source, repository: binding.repository }, steps: input.steps };
+        source: { ...input.source, repository: binding.repository }, steps: input.steps, ...(input.artifacts.length ? { artifacts: input.artifacts } : {}) };
       status = jobStatusSchema.parse(await this.runner.call(binding, 'job_submit', { job }));
       requireThat(status.jobId === jobId && status.digest === planDigest, 'RUNNER_INVALID_RESPONSE');
     } catch (e) { status = undefined; failure = codeOf(e); }
@@ -268,6 +272,44 @@ export class Application {
     if (archived && !archived.receipt.truncated) return this.archive.logs(input.jobId, input.cursor, input.maxBytes);
     const binding = await this.jobBinding(input.projectId, input.jobId);
     return jobLogsSchema.parse(await this.runner.call(binding, 'job_logs', { jobId: input.jobId, cursor: input.cursor, maxBytes: input.maxBytes }));
+  }
+  async downloadArtifact(raw: z.input<typeof artifactDownloadInput>) {
+    const input = artifactDownloadInput.parse(raw);
+    const destination = input.localDestination;
+    requireThat(isAbsolute(destination), 'DESTINATION_INVALID');
+    requireThat(!await lstat(destination).then(() => true, () => false), 'DESTINATION_EXISTS');
+    requireThat(await lstat(dirname(destination)).then(s => s.isDirectory(), () => false), 'DESTINATION_INVALID');
+    // An archived copy needs no Codespace; otherwise copy the frozen artifact from the instance where the job ran.
+    const archived = await this.archived(input.projectId, input.jobId);
+    let status = archived?.status, binding: Binding | undefined;
+    const local = await this.archive.artifact(input.jobId, input.artifact);
+    if (!local) {
+      binding = await this.jobBinding(input.projectId, input.jobId);
+      status ??= jobStatusSchema.parse(await this.runner.call(binding, 'job_get', { jobId: input.jobId }));
+      requireThat(status.projectId === input.projectId, 'JOB_NOT_FOUND');
+    }
+    const entry = status!.artifacts.find(a => a.name === input.artifact);
+    requireThat(entry, 'ARTIFACT_NOT_FOUND');
+    requireThat(entry.state === 'collected' && entry.kind, 'ARTIFACT_NOT_COLLECTED');
+    // Transfer next to the destination, verify against the frozen manifest, then place without overwriting.
+    const temp = join(dirname(destination), `.${basename(destination)}.${randomBytes(6).toString('hex')}.partial`);
+    try {
+      if (local) await (entry.kind === 'file' ? copyFile(local, temp) : cp(local, temp, { recursive: true, errorOnExist: true }));
+      else await this.whileHeld(binding!, () => this.gh.copy(binding!.codespaceName, transferPath(status!, entry.name), temp, entry.kind === 'directory'));
+      await verifyArtifact(temp, entry);
+      await placeArtifact(temp, destination, entry.kind);
+    } finally { await discard(temp); }
+    return { artifact: entry.name, kind: entry.kind, localPath: destination, size: entry.size ?? 0, sha256: entry.sha256,
+      files: entry.kind === 'directory' ? entry.files.length : 1, source: local ? 'archive' as const : 'codespace' as const, verified: true as const };
+  }
+  // A transfer from a dedicated instance is usage: hold it so the release controller cannot stop it mid-copy.
+  // The hold outlasts the copy timeout and is cleared afterwards; a closing instance refuses it (CODESPACE_RELEASING).
+  private async whileHeld<T>(binding: Binding, fn: () => Promise<T>): Promise<T> {
+    if (binding.ownership !== 'dedicated') return fn();
+    const holdId = randomBytes(16).toString('hex');
+    instanceStatusSchema.parse(await this.runner.call(binding, 'hold_set', { holdId, holdSeconds: 16 * 60 }));
+    try { return await fn(); }
+    finally { await this.runner.call(binding, 'hold_clear', { holdId }).catch(() => {}); }
   }
   async releaseRecord(codespaceName: string, requestedPolicy: ReleaseRecord['requestedPolicy']) {
     const stored = await this.store.read('release', codespaceName);

@@ -11,11 +11,13 @@ export const ARCHIVE_LOG_LIMIT = 8 * 1024 * 1024;
 export class Archive {
   constructor(readonly root: string) {}
   private dir(jobId: string) { requireThat(/^[a-f0-9]{64}$/.test(jobId), 'STATE_INVALID'); return join(this.root, jobId); }
-  async write(status: JobStatus, log: Buffer, remoteLogBytes: number) {
+  // `artifacts.dir` holds copies already verified against the manifest; it is moved into the archive atomically.
+  async write(status: JobStatus, log: Buffer, remoteLogBytes: number, artifacts: { dir: string; exported: string[]; skipped: string[] } | null = null) {
     requireThat(status.settled, 'STATE_INVALID');
     const statusText = JSON.stringify(status);
     const receipt = archiveReceiptSchema.parse({ schemaVersion: 1, jobId: status.jobId, digest: status.digest, statusSha256: sha256(statusText),
-      logSha256: sha256(log), logBytes: log.length, remoteLogBytes, truncated: log.length < remoteLogBytes, archivedAt: new Date().toISOString() });
+      logSha256: sha256(log), logBytes: log.length, remoteLogBytes, truncated: log.length < remoteLogBytes, archivedAt: new Date().toISOString(),
+      artifactsExported: artifacts?.exported ?? [], artifactsSkipped: artifacts?.skipped ?? [] });
     await mkdir(this.root, { recursive: true });
     // Assemble in a private directory and rename: a crash never leaves a half-written archive under the job id.
     const temp = join(this.root, `.tmp-${randomUUID()}`);
@@ -23,6 +25,7 @@ export class Archive {
       await mkdir(temp, { mode: 0o700 });
       await writeFile(join(temp, 'status.json'), statusText, { mode: 0o600 });
       await writeFile(join(temp, 'job.log'), log, { mode: 0o600 });
+      if (artifacts) await rename(artifacts.dir, join(temp, 'artifacts'));
       await writeFile(join(temp, 'receipt.json'), JSON.stringify(receipt), { mode: 0o600 });
       await rm(this.dir(status.jobId), { recursive: true, force: true });
       await rename(temp, this.dir(status.jobId));
@@ -40,6 +43,11 @@ export class Archive {
     const status = jobStatusSchema.safeParse(JSON.parse(statusText));
     requireThat(status.success, 'ARCHIVE_CORRUPT');
     return { status: status.data, receipt: receipt.data };
+  }
+  // Path of an exported artifact, or undefined when it was not exported (skipped by quota or archived before artifacts).
+  async artifact(jobId: string, name: string) {
+    const archived = await this.read(jobId);
+    return archived?.receipt.artifactsExported.includes(name) ? join(this.dir(jobId), 'artifacts', name) : undefined;
   }
   async logs(jobId: string, cursor: string, maxBytes: number) {
     const archived = await this.read(jobId);

@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 为本地 AI Agent 提供仅以 **GitHub Codespaces** 为远端后端的 MCP。开发在本地进行；宿主按用户授权完成 **Commit → Push**，MCP 在远端获取并验证精确提交，再执行通用任务，取回结果并自动释放受管资源。MCP 是通用 worker：Docker 与其他工具链一样只是步骤调用的普通命令，不设专用模板或步骤类型（设计 0.5，§7.3）。
 
-已交付 **M0 传输 PoC**、**M1 第一部分（精确提交任务，docs/M1.md）** 与 **M1 第二部分（使用后自动停止，docs/LIFECYCLE.md）**，经 PR #1 合并到 main（2026-10-15），均已在真实 Codespace 上验证。M1 只剩产物（收集、上传、下载）未完成。M0 代码基线为 `7dfd8f1966f53b44678ac691ceb1d067b376a8d8`，原开发分支为 `codex/m0-protocol-transport`。本次交接另有文档提交；接手时用 `git log`、`git status` 和远端 refs 确认最终版本，不把基线 SHA 当成永远最新。
+已交付 **M0 传输 PoC**、**M1 第一部分（精确提交任务，docs/M1.md）** 与 **M1 第二部分（使用后自动停止，docs/LIFECYCLE.md）**，经 PR #1 合并到 main（2026-10-15），均已在真实 Codespace 上验证。产物收集、校验下载与停止前导出见 docs/ARTIFACTS.md（PR #2，已在真实 Codespace 上验证）；M1 只剩输入上传。产物传输必须使用 runner 提供的 `transferRoot` 别名与 `gh codespace cp -e`：字面模式的引号与 OpenSSH 9+ 的 SFTP 模式 scp 不兼容。M0 代码基线为 `7dfd8f1966f53b44678ac691ceb1d067b376a8d8`，原开发分支为 `codex/m0-protocol-transport`。本次交接另有文档提交；接手时用 `git log`、`git status` 和远端 refs 确认最终版本，不把基线 SHA 当成永远最新。
 
 内部 package 版本为 `0.1.0-alpha.0`，`private: true` 防止误发 npm；许可证 MIT。没有 Release、标签、公开软件包或完整云端验收。用户本次授权创建并推送 **Private** GitHub 仓库，名称中的空格规范化为 `GitHub-Codespaces-MCP`，账号为 `TheRealKamisama`。不要擅自改成 Public。
 
@@ -37,6 +37,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `src/github.ts` | gh 身份检查、只读 API、实例查询和分页 |
 | `src/application.ts` | 本机绑定、prepare 持久化/恢复、诊断编排、job 记录（先持久化再远端调用）与对账 |
 | `src/lifecycle.ts` | 本地释放控制进程（`node dist/cli.js controller`，按需启动、单实例锁）：对账、导出归档、统计租约、宽限、远端原子关闭、停止并等 GitHub 确认 Shutdown。只在本地状态锁内做短写入，从不跨网络调用持锁 |
+| `src/artifacts.ts` | 产物远端冻结路径、按清单校验（大小、SHA-256、目录文件集合）、不覆盖地放置；传输用 `gh codespace cp`，不自造协议 |
 | `src/archive.ts` | settled 任务的本地归档（状态、日志、SHA-256 回执），任务读取优先走归档，不重启实例 |
 | `src/git.ts` | `project_inspect` 的只读本地 git 检查；GitHub remote 解析不返回凭据 |
 | `src/storage.ts` | JSON 状态、原子替换、跨进程目录锁 |
