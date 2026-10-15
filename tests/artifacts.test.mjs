@@ -190,3 +190,14 @@ test('a failed artifact export blocks the stop within the export window and neve
   await controller.tick();
   assert.deepEqual((await f.app.archive.read(jobId)).receipt.artifactsExported, ['app.tar']);
 });
+
+test('jobs whose artifacts cannot be transferred are still archived, with their artifacts recorded as skipped', async t => {
+  const f = await world(t);
+  const jobId = await settledJob(f, []);
+  const manifest = await freeze(f, jobId, { 'app.tar': 'package' });
+  f.w.status = (s => j => ({ ...s(j), artifacts: manifest, transferRoot: null }))(f.w.status);
+  await new Controller(f.app, () => f.w.now).tick();
+  const archived = await f.app.archive.read(jobId);
+  assert.deepEqual([archived.status.state, archived.receipt.artifactsExported, archived.receipt.artifactsSkipped], ['succeeded', [], ['app.tar']]);
+  assert.deepEqual(f.w.copies, []);
+});

@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { appendFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AppError } from './errors.js';
@@ -223,6 +223,12 @@ export class Controller {
   private async exportArtifacts(binding: Binding, status: ReturnType<typeof jobStatusSchema.parse>) {
     const collected = status.artifacts.filter(a => a.state === 'collected').sort((a, b) => Number(b.required) - Number(a.required));
     if (collected.length === 0) return null;
+    // Jobs from runners without a transfer alias can never be copied: archive their status and log, skip artifacts.
+    try { transferPath(status, collected[0]!.name); }
+    catch {
+      await mkdir(this.app.archive.root, { recursive: true });
+      return { dir: await mkdtemp(join(this.app.archive.root, '.staging-')), exported: [], skipped: collected.map(a => a.name) };
+    }
     const dir = join(this.app.archive.root, `.staging-${randomBytes(8).toString('hex')}`);
     await mkdir(dir, { recursive: true });
     const exported: string[] = [], skipped: string[] = [];
