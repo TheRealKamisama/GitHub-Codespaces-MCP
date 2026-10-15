@@ -23,7 +23,7 @@ async function world(t) {
   t.after(() => rm(root, { recursive: true, force: true }));
   const remote = join(root, 'remote'), out = join(root, 'out');
   await mkdir(out);
-  const w = { state: 'Available', copies: [], corrupt: null, failCopy: false, jobs: new Map(), now: Date.now() };
+  const w = { state: 'Available', copies: [], corrupt: null, failCopy: false, jobs: new Map(), now: Date.now(), holds: [], closing: false };
   const gh = new Github(async (file, args) => {
     if (args[0] === '--version') return { stdout: 'gh version fixture\n', stderr: '', exitCode: 0 };
     if (args[0] === 'auth') return reply({ hosts: { 'github.com': [{ active: true, state: 'success', login: 'fixture' }] } });
@@ -31,6 +31,7 @@ async function world(t) {
     if (args[0] === 'codespace' && args[1] === 'cp') {
       const [source, destination] = args.slice(-2);
       w.copies.push(source);
+      w.holdsDuringCopy = [...w.holds];
       assert.ok(args.includes('-e'), 'literal-mode quoting breaks SFTP-mode scp; transfers use -e on inert paths');
       if (w.failCopy) return { stdout: '', stderr: 'lost connection', exitCode: 1 };
       await cp(join(remote, source.replace(/^remote:/, '')), destination, { recursive: args.includes('-r') });
@@ -45,7 +46,11 @@ async function world(t) {
     if (action === 'job_submit') { w.jobs.set(fields.job.jobId, fields.job); return w.status(fields.job); }
     if (action === 'job_get') { const job = w.jobs.get(fields.jobId); if (!job) throw new AppError('JOB_NOT_FOUND'); return w.status(job); }
     if (action === 'job_logs') return { jobId: fields.jobId, cursor: fields.cursor, nextCursor: 'v1:3', text: fields.cursor === 'v1:0' ? 'ok\n' : '', size: 3, complete: true };
-    if (action === 'instance_status' || action === 'instance_close') return { generation: 'g', closed: action === 'instance_close', activeJobs: [], holds: [], closing: null };
+    if (action === 'hold_set') { if (w.closing) throw new AppError('CODESPACE_RELEASING'); w.holds.push(fields.holdId); w.heldDuringCopy = true; }
+    if (action === 'hold_clear') w.holds = w.holds.filter(h => h !== fields.holdId);
+    if (['instance_status', 'instance_close', 'hold_set', 'hold_clear'].includes(action)) {
+      return { generation: 'g', closed: action === 'instance_close', activeJobs: [], closing: null, holds: w.holds.map(holdId => ({ holdId, expiresAt: 9e9 })) };
+    }
     throw new Error(`unexpected ${action}`);
   } };
   const app = new Application(new Store(join(root, 'state')), gh, runner, undefined, { sleep: async () => {} });
@@ -200,4 +205,21 @@ test('jobs whose artifacts cannot be transferred are still archived, with their 
   const archived = await f.app.archive.read(jobId);
   assert.deepEqual([archived.status.state, archived.receipt.artifactsExported, archived.receipt.artifactsSkipped], ['succeeded', [], ['app.tar']]);
   assert.deepEqual(f.w.copies, []);
+});
+
+test('a download from a dedicated instance holds it for the transfer, and a closing instance refuses the download', async t => {
+  const f = await world(t);
+  const jobId = await settledJob(f, []);
+  const manifest = await freeze(f, jobId, { 'app.tar': 'package' });
+  f.w.status = (s => j => ({ ...s(j), artifacts: manifest }))(f.w.status);
+  await f.app.downloadArtifact({ projectId: 'p/art', jobId, artifact: 'app.tar', localDestination: join(f.out, 'held.tar') });
+  assert.equal(f.w.holdsDuringCopy.length, 1, 'held while copying');
+  assert.deepEqual(f.w.holds, [], 'hold released afterwards');
+  f.w.failCopy = true;
+  await assert.rejects(f.app.downloadArtifact({ projectId: 'p/art', jobId, artifact: 'app.tar', localDestination: join(f.out, 'fails.tar') }), { code: 'TRANSFER_FAILED' });
+  assert.deepEqual(f.w.holds, [], 'hold released after a failed copy too');
+  f.w.failCopy = false; f.w.closing = true;
+  const copies = f.w.copies.length;
+  await assert.rejects(f.app.downloadArtifact({ projectId: 'p/art', jobId, artifact: 'app.tar', localDestination: join(f.out, 'late.tar') }), { code: 'CODESPACE_RELEASING' });
+  assert.equal(f.w.copies.length, copies, 'no transfer is started on a closing instance');
 });

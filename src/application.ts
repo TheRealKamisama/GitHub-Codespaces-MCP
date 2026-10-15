@@ -295,12 +295,21 @@ export class Application {
     const temp = join(dirname(destination), `.${basename(destination)}.${randomBytes(6).toString('hex')}.partial`);
     try {
       if (local) await (entry.kind === 'file' ? copyFile(local, temp) : cp(local, temp, { recursive: true, errorOnExist: true }));
-      else await this.gh.copy(binding!.codespaceName, transferPath(status!, entry.name), temp, entry.kind === 'directory');
+      else await this.whileHeld(binding!, () => this.gh.copy(binding!.codespaceName, transferPath(status!, entry.name), temp, entry.kind === 'directory'));
       await verifyArtifact(temp, entry);
       await placeArtifact(temp, destination, entry.kind);
     } finally { await discard(temp); }
     return { artifact: entry.name, kind: entry.kind, localPath: destination, size: entry.size ?? 0, sha256: entry.sha256,
       files: entry.kind === 'directory' ? entry.files.length : 1, source: local ? 'archive' as const : 'codespace' as const, verified: true as const };
+  }
+  // A transfer from a dedicated instance is usage: hold it so the release controller cannot stop it mid-copy.
+  // The hold outlasts the copy timeout and is cleared afterwards; a closing instance refuses it (CODESPACE_RELEASING).
+  private async whileHeld<T>(binding: Binding, fn: () => Promise<T>): Promise<T> {
+    if (binding.ownership !== 'dedicated') return fn();
+    const holdId = randomBytes(16).toString('hex');
+    instanceStatusSchema.parse(await this.runner.call(binding, 'hold_set', { holdId, holdSeconds: 16 * 60 }));
+    try { return await fn(); }
+    finally { await this.runner.call(binding, 'hold_clear', { holdId }).catch(() => {}); }
   }
   async releaseRecord(codespaceName: string, requestedPolicy: ReleaseRecord['requestedPolicy']) {
     const stored = await this.store.read('release', codespaceName);
