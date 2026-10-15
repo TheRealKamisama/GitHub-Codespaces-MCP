@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 为本地 AI Agent 提供仅以 **GitHub Codespaces** 为远端后端的 MCP。开发在本地进行；宿主按用户授权完成 **Commit → Push**，MCP 在远端获取并验证精确提交，再执行通用任务，取回结果并自动释放受管资源。MCP 是通用 worker：Docker 与其他工具链一样只是步骤调用的普通命令，不设专用模板或步骤类型（设计 0.5，§7.3）。
 
-已交付 **M0 传输 PoC**、**M1 第一部分（精确提交任务，docs/M1.md）** 与 **M1 第二部分（使用后自动停止，docs/LIFECYCLE.md）**，经 PR #1 合并到 main（2026-10-15），均已在真实 Codespace 上验证。产物收集与下载见 docs/ARTIFACTS.md（分支 `claude/m1-artifacts`）；M1 剩余输入上传。M0 代码基线为 `7dfd8f1966f53b44678ac691ceb1d067b376a8d8`，原开发分支为 `codex/m0-protocol-transport`。本次交接另有文档提交；接手时用 `git log`、`git status` 和远端 refs 确认最终版本，不把基线 SHA 当成永远最新。
+已交付 **M0 传输 PoC**、**M1 第一部分（精确提交任务，docs/M1.md）** 与 **M1 第二部分（使用后自动停止，docs/LIFECYCLE.md）**，经 PR #1 合并到 main（2026-10-15），均已在真实 Codespace 上验证。产物收集、校验下载与停止前导出见 docs/ARTIFACTS.md（PR #2，已在真实 Codespace 上验证）；M1 只剩输入上传。产物传输必须使用 runner 提供的 `transferRoot` 别名与 `gh codespace cp -e`：字面模式的引号与 OpenSSH 9+ 的 SFTP 模式 scp 不兼容。M0 代码基线为 `7dfd8f1966f53b44678ac691ceb1d067b376a8d8`，原开发分支为 `codex/m0-protocol-transport`。本次交接另有文档提交；接手时用 `git log`、`git status` 和远端 refs 确认最终版本，不把基线 SHA 当成永远最新。
 
 内部 package 版本为 `0.1.0-alpha.0`，`private: true` 防止误发 npm；许可证 MIT。没有 Release、标签、公开软件包或完整云端验收。用户本次授权创建并推送 **Private** GitHub 仓库，名称中的空格规范化为 `GitHub-Codespaces-MCP`，账号为 `TheRealKamisama`。不要擅自改成 Public。
 
