@@ -7,7 +7,7 @@ import { AppError } from './errors.js';
 import { bindingSchema, instanceStatusSchema, jobRecordSchema, jobStatusSchema, jobLogsSchema, operationSchema, type Binding, type JobRecord, type ReleaseRecord } from './contracts.js';
 import { Application, codeOf, releasePolicy } from './application.js';
 import { ARCHIVE_LOG_LIMIT } from './archive.js';
-import { discard, remoteArtifactPath, verifyArtifact } from './artifacts.js';
+import { discard, transferPath, verifyArtifact } from './artifacts.js';
 
 export const PREPARE_LEASE_MS = 5 * 60_000;
 const RECONCILE_AFTER_MS = 60_000;
@@ -204,7 +204,7 @@ export class Controller {
       }
       try {
         const { log, remoteBytes } = await this.fetchLog(binding, job.jobId);
-        const artifacts = await this.exportArtifacts(binding, job, status);
+        const artifacts = await this.exportArtifacts(binding, status);
         try { await this.app.archive.write(status, log, remoteBytes, artifacts); }
         finally { if (artifacts) await discard(artifacts.dir); }
         result.archived++;
@@ -220,7 +220,7 @@ export class Controller {
   }
 
   // Required artifacts first, within the export quota; every copy is verified against the frozen manifest.
-  private async exportArtifacts(binding: Binding, job: JobRecord, status: ReturnType<typeof jobStatusSchema.parse>) {
+  private async exportArtifacts(binding: Binding, status: ReturnType<typeof jobStatusSchema.parse>) {
     const collected = status.artifacts.filter(a => a.state === 'collected').sort((a, b) => Number(b.required) - Number(a.required));
     if (collected.length === 0) return null;
     const dir = join(this.app.archive.root, `.staging-${randomBytes(8).toString('hex')}`);
@@ -231,7 +231,7 @@ export class Controller {
       for (const entry of collected) {
         if ((entry.size ?? 0) > budget) { skipped.push(entry.name); continue; }
         const target = join(dir, entry.name);
-        await this.app.gh.copy(binding.codespaceName, remoteArtifactPath(job.remoteProjectRoot, job.jobId, entry.name), target, entry.kind === 'directory');
+        await this.app.gh.copy(binding.codespaceName, transferPath(status, entry.name), target, entry.kind === 'directory');
         await verifyArtifact(target, entry);
         exported.push(entry.name); budget -= entry.size ?? 0;
       }

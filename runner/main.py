@@ -429,7 +429,7 @@ class Jobs:
                 'settled': settled, 'observation': observation, 'errorCode': status['errorCode'], 'cancelRequested': cancel_requested,
                 'generation': status['generation'], 'acceptedAt': status['acceptedAt'], 'startedAt': status['startedAt'],
                 'endedAt': status['endedAt'], 'updatedAt': status['updatedAt'], 'source': status['source'], 'steps': steps,
-                'summary': summary, 'artifacts': status.get('artifacts', [])}
+                'summary': summary, 'artifacts': status.get('artifacts', []), 'transferRoot': status.get('transferRoot')}
 
     def submit(self, job, binding, instance):
         validate_job(job, binding)
@@ -444,6 +444,17 @@ class Jobs:
                 return self.present(directory)
             instance.require_open()
             directory.mkdir(mode=0o700)
+            # A transfer path of only [A-Za-z0-9._/-]: scp quoting differs between its legacy and SFTP protocols, so the
+            # client copies through this alias of the frozen store instead of a path containing the project root.
+            transfer = None
+            if job.get('artifacts'):
+                aliases = instance.root / 'transfer'
+                if aliases.is_symlink():
+                    raise ValueError('PATH_INVALID')
+                aliases.mkdir(exist_ok=True)
+                transfer = aliases / job['jobId']
+                if not transfer.is_symlink():
+                    os.symlink(directory / 'artifacts', transfer)
             atomic(directory / 'request.json', job)
             now = time.time()
             steps = [{'id': s['id'], 'role': s['role'], 'optional': s.get('optional', False), 'state': 'pending', 'exitCode': None,
@@ -456,7 +467,8 @@ class Jobs:
                                  'requestedCommit': source['commit'], 'resolvedCommit': None, 'sourceModified': None, 'workdir': None},
                       'steps': steps, 'summary': summarize(steps, 'pending'),
                       'artifacts': [{'name': a['name'], 'path': a['path'], 'required': a.get('required', True), 'kind': None, 'state': 'pending',
-                                     'size': None, 'sha256': None, 'files': [], 'errorCode': None} for a in job.get('artifacts', [])]}
+                                     'size': None, 'sha256': None, 'files': [], 'errorCode': None} for a in job.get('artifacts', [])],
+                      'transferRoot': str(transfer) if transfer else None}
             # Persist before spawning: an ambiguous crash is reported, never resolved by starting a duplicate.
             atomic(directory / 'status.json', status)
             # The supervisor keeps git credentials for fetch; step processes receive a token-free environment.

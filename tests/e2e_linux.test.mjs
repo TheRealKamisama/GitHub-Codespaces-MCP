@@ -42,7 +42,7 @@ else if (args[0] === 'api') out({ name: 'fixture-space', state: state(), reposit
 else if (args[0] === 'codespace' && args[1] === 'cp') {
   // Like scp: copy the literal remote path (this "remote" is the local file system) to the local destination.
   const [source, destination] = args.slice(-2);
-  fs.cpSync(source.replace(/^remote:/, ''), destination, { recursive: args.includes('-r'), errorOnExist: true, force: false });
+  fs.cpSync(source.replace(/^remote:/, ''), destination, { recursive: args.includes('-r'), dereference: true, errorOnExist: true, force: false });
 }
 else if (args[0] === 'codespace' && args[1] === 'ssh') {
   const r = require('node:child_process').spawnSync('sh', ['-c', args.at(-1)], { input: fs.readFileSync(0), maxBuffer: 64 * 1024 * 1024, env: { ...process.env, CODESPACE_NAME: 'fixture-space' } });

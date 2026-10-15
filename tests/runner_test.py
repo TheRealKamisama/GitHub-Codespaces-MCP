@@ -459,6 +459,9 @@ class LinuxJobs(unittest.TestCase):
                          {'report': ('collected', None), 'leak': ('rejected', 'ARTIFACT_PATH_INVALID'), 'binary': ('missing', 'ARTIFACT_MISSING')})
         frozen = Path(self.binding['remoteProjectRoot']) / '.codespace-mcp' / 'jobs' / job['jobId'] / 'artifacts'
         self.assertEqual(sorted(p.name for p in frozen.iterdir()), ['report'])
+        # Transfers use an alias with an inert path; it resolves to the frozen store.
+        self.assertRegex(data['transferRoot'], r'^/workspaces/[A-Za-z0-9._/-]+$')
+        self.assertEqual(Path(data['transferRoot']).resolve(), frozen.resolve())
         self.assertEqual((frozen / 'report').read_text(), 'report\n', 'frozen before the cleanup step removed dist/')
         self.assertEqual(data['steps'][1]['state'], 'passed')
         # Jobs that never reached collection report not_collected, never missing.

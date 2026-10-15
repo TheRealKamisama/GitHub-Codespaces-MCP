@@ -6,7 +6,7 @@ import { randomBytes } from 'node:crypto';
 import { bindingSchema, bindingInput, prepareInput, operationSchema, handshakeSchema, jobSubmitInput, jobRecordSchema, jobStatusSchema, jobGetInput, jobLogsInput, jobLogsSchema, jobRef, inspectInput, artifactDownloadInput, releaseInput, releaseRecordSchema, instanceStatusSchema, type Binding, type Operation, type JobRecord, type JobStatus, type ReleaseRecord } from './contracts.js';
 import { Github } from './github.js';
 import { Archive } from './archive.js';
-import { discard, placeArtifact, remoteArtifactPath, verifyArtifact } from './artifacts.js';
+import { discard, placeArtifact, transferPath, verifyArtifact } from './artifacts.js';
 import { LocalGit } from './git.js';
 import { Store, digest } from './storage.js';
 import type { RunnerPort } from './transport/runner.js';
@@ -281,11 +281,10 @@ export class Application {
     requireThat(await lstat(dirname(destination)).then(s => s.isDirectory(), () => false), 'DESTINATION_INVALID');
     // An archived copy needs no Codespace; otherwise copy the frozen artifact from the instance where the job ran.
     const archived = await this.archived(input.projectId, input.jobId);
-    let status = archived?.status, remoteRoot: string | undefined, binding: Binding | undefined;
+    let status = archived?.status, binding: Binding | undefined;
     const local = await this.archive.artifact(input.jobId, input.artifact);
     if (!local) {
       binding = await this.jobBinding(input.projectId, input.jobId);
-      remoteRoot = (await this.jobRecord(input.jobId))?.remoteProjectRoot ?? binding.remoteProjectRoot;
       status ??= jobStatusSchema.parse(await this.runner.call(binding, 'job_get', { jobId: input.jobId }));
       requireThat(status.projectId === input.projectId, 'JOB_NOT_FOUND');
     }
@@ -296,7 +295,7 @@ export class Application {
     const temp = join(dirname(destination), `.${basename(destination)}.${randomBytes(6).toString('hex')}.partial`);
     try {
       if (local) await (entry.kind === 'file' ? copyFile(local, temp) : cp(local, temp, { recursive: true, errorOnExist: true }));
-      else await this.gh.copy(binding!.codespaceName, remoteArtifactPath(remoteRoot!, input.jobId, entry.name), temp, entry.kind === 'directory');
+      else await this.gh.copy(binding!.codespaceName, transferPath(status!, entry.name), temp, entry.kind === 'directory');
       await verifyArtifact(temp, entry);
       await placeArtifact(temp, destination, entry.kind);
     } finally { await discard(temp); }

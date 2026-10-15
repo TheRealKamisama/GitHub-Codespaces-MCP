@@ -103,6 +103,8 @@ export const jobStatusSchema = z.strictObject({
     size: z.number().int().nonnegative().nullable(), sha256: hex64.nullable(),
     files: z.array(z.strictObject({ path: z.string(), size: z.number().int().nonnegative(), sha256: hex64 })), errorCode: z.string().nullable(),
   })).default([]),
+  // Alias of the frozen artifact store with a transfer-safe path (see src/artifacts.ts); null without artifacts.
+  transferRoot: z.string().nullable().default(null),
 });
 export type JobStatus = z.infer<typeof jobStatusSchema>;
 // Local locator: persisted before the remote call so a lost response is reconciled with the same requestId.

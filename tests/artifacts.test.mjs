@@ -31,6 +31,7 @@ async function world(t) {
     if (args[0] === 'codespace' && args[1] === 'cp') {
       const [source, destination] = args.slice(-2);
       w.copies.push(source);
+      assert.ok(args.includes('-e'), 'literal-mode quoting breaks SFTP-mode scp; transfers use -e on inert paths');
       if (w.failCopy) return { stdout: '', stderr: 'lost connection', exitCode: 1 };
       await cp(join(remote, source.replace(/^remote:/, '')), destination, { recursive: args.includes('-r') });
       if (w.corrupt) await w.corrupt(destination);
@@ -79,7 +80,8 @@ async function settledJob(f, artifacts, extra = []) {
     cancelRequested: false, generation: 'g', acceptedAt: 1, startedAt: 1, endedAt: f.w.now / 1000, updatedAt: 2,
     source: { mode: 'revision', repository: 'fixture/repo', ref: 'refs/heads/main', requestedCommit: 'c'.repeat(40), resolvedCommit: 'c'.repeat(40), sourceModified: false, workdir: '/w' },
     steps: [{ id: 'build', role: 'build', optional: false, state: 'passed', exitCode: 0, signal: null, errorCode: null, startedAt: 1, endedAt: 2 }],
-    summary: { execution: 'PASS', verification: 'NOT_CONFIGURED', cleanup: 'NOT_CONFIGURED' }, artifacts: [...artifacts, ...extra] });
+    summary: { execution: 'PASS', verification: 'NOT_CONFIGURED', cleanup: 'NOT_CONFIGURED' }, artifacts: [...artifacts, ...extra],
+    transferRoot: `/workspaces/art/.codespace-mcp/jobs/${job.jobId}/artifacts` });
   const record = await f.app.submitJob({ projectId: 'p/art', requestId: `r-${Math.random()}`, source: { ref: 'refs/heads/main', commit: 'c'.repeat(40) },
     steps: [{ id: 'build', role: 'build', kind: 'command', argv: ['true'] }], artifacts: [...artifacts.map(a => ({ name: a.name, path: a.path })), ...extra.map(a => ({ name: a.name, path: a.path, required: a.required }))] });
   assert.equal(record.submission, 'accepted', record.errorCode ?? '');
@@ -138,6 +140,13 @@ test('downloads verify the frozen manifest, place files and directories without 
   await assert.rejects(f.app.downloadArtifact({ projectId: 'p/art', jobId, artifact: 'coverage', localDestination: join(f.out, 'c') }), { code: 'ARTIFACT_NOT_COLLECTED' });
   await assert.rejects(f.app.downloadArtifact({ projectId: 'p/art', jobId, artifact: 'nope', localDestination: join(f.out, 'n') }), { code: 'ARTIFACT_NOT_FOUND' });
   await assert.rejects(f.app.downloadArtifact({ projectId: 'p/art', jobId, artifact: 'app.tar', localDestination: 'relative.tar' }), { code: 'DESTINATION_INVALID' });
+  // A transfer path that a remote shell could expand is refused before gh is ever invoked.
+  const copies = f.w.copies.length;
+  for (const transferRoot of ['/workspaces/my project/x', '/workspaces/$(id)', '/tmp/x', '/workspaces/../etc', null]) {
+    f.w.status = (s => j => ({ ...s(j), transferRoot }))(f.w.status);
+    await assert.rejects(f.app.downloadArtifact({ projectId: 'p/art', jobId, artifact: 'app.tar', localDestination: join(f.out, 'unsafe') }), { code: 'TRANSFER_UNSUPPORTED' }, String(transferRoot));
+  }
+  assert.equal(f.w.copies.length, copies);
   await assert.rejects(f.app.downloadArtifact({ projectId: 'p/art', jobId, artifact: 'app.tar', localDestination: join(f.out, 'missing-dir', 'x') }), { code: 'DESTINATION_INVALID' });
   assert.ok(job);
 });

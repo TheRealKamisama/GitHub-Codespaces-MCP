@@ -7,9 +7,14 @@ import type { JobStatus } from './contracts.js';
 
 export type ArtifactEntry = JobStatus['artifacts'][number];
 
-// Where the runner froze an artifact. Names are validated identifiers, so nothing here needs remote quoting.
-export function remoteArtifactPath(remoteProjectRoot: string, jobId: string, name: string) {
-  return posix.join(remoteProjectRoot, '.codespace-mcp', 'jobs', jobId, 'artifacts', name);
+// Path handed to `gh codespace cp -e`. In literal mode gh single-quotes remote paths for scp's legacy protocol, which
+// breaks with OpenSSH 9+ clients whose scp uses SFTP (the quotes become part of the name). With -e nothing is quoted,
+// so the path must be inert under both protocols: only [A-Za-z0-9._/-], no `..`. The runner provides such an alias.
+export function transferPath(status: JobStatus, name: string) {
+  const root = status.transferRoot;
+  requireThat(root && /^\/workspaces\/[A-Za-z0-9._/-]+$/.test(root) && !root.split('/').includes('..'), 'TRANSFER_UNSUPPORTED');
+  requireThat(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(name), 'TRANSFER_UNSUPPORTED');
+  return posix.join(root, name);
 }
 
 async function sha256(path: string) {
