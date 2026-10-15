@@ -6,6 +6,7 @@
 
 ### Fixed
 
+- 产物传输：`gh codespace cp` 字面模式在 OpenSSH 9+ 的 SFTP 模式 scp 下失败（真实 Codespace 发现）；改为 runner 提供的安全字符别名路径并使用 `-e`。无法传输产物的旧任务仍归档状态与日志。
 - 控制进程在导出与租约检查之间结束的任务可能未导出就停止实例（真实 Codespace 发现）；现先查租约再导出，运行中任务阻止停止。prepare 与 job_submit 不再跨网络调用持有本地状态锁。
 - 真实 Codespace 的非登录 SSH 会话缺少 CODESPACE_NAME 与 git 令牌，导致 prepare 和私有 fetch 失败；bootstrap 现从平台 .env 补充缺失变量，步骤环境同时移除 GITHUB_CODESPACE_TOKEN。
 - 中断任务的运行中步骤显示为 interrupted，未 settled 任务的汇总从步骤实时计算。
@@ -16,7 +17,7 @@
 
 ### Added
 
-- 产物：job_submit 可声明 artifacts，runner 在主步骤后、cleanup 前冻结到只读存储并计算 SHA-256（拒绝链接，配额 256 MiB/1000 文件）；artifact_download 经 gh codespace cp 或本地归档取回并按清单校验后不覆盖地放置；专用实例停止前导出产物（64 MiB/任务）。新增 artifact-build-and-download 演示。详见 docs/ARTIFACTS.md。
+- 产物：job_submit 可声明 artifacts，runner 在主步骤后、cleanup 前冻结到只读存储并计算 SHA-256（拒绝链接，配额 256 MiB/1000 文件）；artifact_download 经 gh codespace cp 或本地归档取回并按清单校验后不覆盖地放置；专用实例停止前导出产物（64 MiB/任务）。新增 artifact-build-and-download 演示；已在真实 Codespace 上验证在线下载、停止前导出与离线下载。详见 docs/ARTIFACTS.md。
 - M1 第二部分：dedicated 绑定与 start_existing；本地释放控制进程按需启动，导出 settled 任务到本地归档（状态、日志、SHA-256 回执），统计远端实例级租约与本地未确认提交、hold、prepare 租约，宽限后原子关闭远端入口并停止实例，GitHub 确认 Shutdown 后才报告释放；新增 codespace_release（status/request/hold/unhold）；已归档任务离线读取。已在真实 Codespace 上验证（A21、A22、停止后离线读取、start_existing），详见 docs/LIFECYCLE.md。
 - 首轮真实 Codespaces 验证（2026-10-14）：在本仓库创建实例并通过真实 MCP stdio 服务验证 prepare、跨会话存活、私有仓库 fetch、精确 SHA、本项目 CI、示例、Docker/Postgres、取消、排队与停止重启后的 interrupted；详见 docs/M1.md。
 - 示例场景（docs/SCENARIOS.md、examples/jobs/）：11 个仅使用通用步骤的 job 计划；6 个在 Linux 容器中实际运行并核对声明结果，Docker/Postgres/Node/Gradle/Rust 示例仅 schema 校验。runner 日志对被信号结束的步骤记录信号名。
